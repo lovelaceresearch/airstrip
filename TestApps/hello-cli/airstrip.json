@@ -1,0 +1,14 @@
+{
+  "name": "Hello CLI",
+  "actions": [
+    {
+      "name": "Say Hello",
+      "command": "python main.py",
+      "isDefault": true
+    },
+    {
+      "name": "JSON Output",
+      "command": "python main.py --json"
+    }
+  ]
+}

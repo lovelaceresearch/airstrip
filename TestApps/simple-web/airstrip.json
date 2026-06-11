@@ -1,0 +1,16 @@
+{
+  "name": "Simple Web",
+  "actions": [
+    {
+      "name": "Start Web",
+      "command": "python server.py",
+      "isDefault": true,
+      "web": {
+        "port": 8765,
+        "openPath": "/",
+        "openOnStart": true,
+        "allowPortFallback": true
+      }
+    }
+  ]
+}

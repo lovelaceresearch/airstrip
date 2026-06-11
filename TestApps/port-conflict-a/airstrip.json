@@ -1,0 +1,16 @@
+{
+  "name": "Port Conflict A",
+  "actions": [
+    {
+      "name": "Start 9000",
+      "command": "python server.py",
+      "isDefault": true,
+      "web": {
+        "port": 9000,
+        "openPath": "/",
+        "openOnStart": true,
+        "allowPortFallback": false
+      }
+    }
+  ]
+}

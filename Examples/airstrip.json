@@ -1,0 +1,16 @@
+{
+  "name": "Invoice Assistant",
+  "icon": "icon.png",
+  "run": "python app.py",
+  "actions": [
+    {
+      "name": "Run Demo",
+      "command": "python app.py --demo",
+      "isDefault": true
+    }
+  ],
+  "requirements": "requirements.txt",
+  "ollama": {
+    "models": ["llama3.1:8b"]
+  }
+}
