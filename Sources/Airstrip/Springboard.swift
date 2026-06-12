@@ -1,118 +1,388 @@
 import AppKit
 import SwiftUI
 
-struct Springboard: View {
-    @EnvironmentObject private var store: ProjectStore
-    @Binding var selection: AirstripProject.ID?
+// MARK: - Launcher grid
 
+struct LauncherGrid: View {
+    @EnvironmentObject private var store: ProjectStore
+    let openProject: (AirstripProject.ID) -> Void
+
+    // Fixed column width and leading alignment: adaptive width ranges and
+    // centered layout both make tiles slide around while the window resizes.
+    // Left-anchored fixed columns only reflow at clean breakpoints, like
+    // Finder's icon view.
     private let columns = [
-        GridItem(.adaptive(minimum: 132, maximum: 156), spacing: 18)
+        GridItem(.adaptive(minimum: 132, maximum: 132), spacing: 18, alignment: .top)
     ]
 
     var body: some View {
         ScrollView {
-            LazyVGrid(columns: columns, spacing: 22) {
+            LazyVGrid(columns: columns, alignment: .leading, spacing: 22) {
                 ForEach(store.projects) { project in
-                    ProjectIcon(project: project, isSelected: selection == project.id)
-                        .onTapGesture {
-                            selection = project.id
-                        }
-                        .onTapGesture(count: 2) {
-                            selection = project.id
-                            store.toggle(project)
-                        }
-                        .contextMenu {
-                            Button(projectState(project).isRunning ? "Stop" : "Run") {
-                                selection = project.id
-                                store.toggle(project)
-                            }
-
-                            if !projectState(project).isRunning {
-                                ForEach(store.actions(for: project)) { action in
-                                    Button(action.name) {
-                                        selection = project.id
-                                        store.run(project, action: action)
-                                    }
-                                }
-                            }
-
-                            Button("Reveal in Finder") {
-                                NSWorkspace.shared.activateFileViewerSelecting([project.path])
-                            }
-
-                            Button("Open Logs") {
-                                selection = project.id
-                            }
-
-                            Divider()
-
-                            Button("Remove from Airstrip", role: .destructive) {
-                                store.remove(project)
-                            }
-                        }
+                    ProjectTile(project: project) {
+                        openProject(project.id)
+                    }
+                    .onTapGesture(count: 2) {
+                        openProject(project.id)
+                        store.toggle(project)
+                    }
+                    .onTapGesture {
+                        openProject(project.id)
+                    }
+                    .contextMenu {
+                        tileMenu(for: project)
+                    }
                 }
             }
-            .padding(28)
+            .padding(.horizontal, 28)
+            .padding(.vertical, 26)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .background(Color(nsColor: .textBackgroundColor))
     }
 
-    private func projectState(_ project: AirstripProject) -> ProjectRuntimeState {
-        store.runtimeStates[project.id] ?? ProjectRuntimeState()
+    @ViewBuilder
+    private func tileMenu(for project: AirstripProject) -> some View {
+        let state = store.runtimeStates[project.id] ?? ProjectRuntimeState()
+
+        Button(state.isRunning ? "Stop" : "Run") {
+            openProject(project.id)
+            store.toggle(project)
+        }
+
+        if state.isRunning, state.activeWebURL != nil {
+            Button("Open in Browser") {
+                store.openWebUI(for: project)
+            }
+        }
+
+        if !state.isRunning {
+            let actions = store.actions(for: project)
+            if actions.count > 1 {
+                Menu("Run Action") {
+                    ForEach(actions) { action in
+                        Button(action.name) {
+                            openProject(project.id)
+                            store.run(project, action: action)
+                        }
+                    }
+                }
+            }
+        }
+
+        Divider()
+
+        Button("Show Details") {
+            openProject(project.id)
+        }
+
+        Button("Reveal in Finder") {
+            NSWorkspace.shared.activateFileViewerSelecting([project.path])
+        }
+
+        Divider()
+
+        Button("Remove from Airstrip", role: .destructive) {
+            store.remove(project)
+        }
     }
 }
 
-private struct ProjectIcon: View {
+// MARK: - Tile
+
+private struct ProjectTile: View {
     @EnvironmentObject private var store: ProjectStore
     let project: AirstripProject
-    let isSelected: Bool
+    let onActivate: () -> Void
+
+    @State private var isHovering = false
 
     private var state: ProjectRuntimeState {
         store.runtimeStates[project.id] ?? ProjectRuntimeState()
     }
 
-    var body: some View {
-        VStack(spacing: 10) {
-            ZStack(alignment: .bottomTrailing) {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(iconFill)
-                    .overlay {
-                        Image(systemName: "paperplane.fill")
-                            .font(.system(size: 34, weight: .semibold))
-                            .foregroundStyle(.white)
-                    }
-                    .frame(width: 78, height: 78)
-                    .shadow(color: .black.opacity(0.12), radius: 10, y: 5)
+    private var status: ProjectDisplayStatus {
+        ProjectDisplayStatus(state)
+    }
 
-                if state.isRunning {
-                    Circle()
-                        .fill(.green)
-                        .frame(width: 14, height: 14)
-                        .overlay(Circle().stroke(.white, lineWidth: 2))
-                        .offset(x: 2, y: 2)
+    var body: some View {
+        VStack(spacing: 11) {
+            ZStack {
+                ProjectIconBadge(project: project, size: 86)
+                    .shadow(color: .black.opacity(isHovering ? 0.22 : 0.12), radius: isHovering ? 13 : 9, y: 5)
+                    .scaleEffect(isHovering ? 1.04 : 1)
+
+                if isHovering {
+                    RunStopOverlay(isRunning: state.isRunning, isPreparing: state.isPreparing) {
+                        onActivate()
+                        store.toggle(project)
+                    }
+                }
+
+                statusBadge
+                    .offset(x: 36, y: 36)
+            }
+            .frame(width: 92, height: 92)
+            .animation(.spring(response: 0.28, dampingFraction: 0.7), value: isHovering)
+
+            VStack(spacing: 3) {
+                Text(project.name)
+                    .font(.system(size: 13, weight: .medium))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+
+                if needsAcknowledgment {
+                    // Clicking the badge marks it as checked without opening
+                    // the app; the run history stays in the app tab.
+                    Button {
+                        store.acknowledge(project.id)
+                    } label: {
+                        captionLabel
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2.5)
+                            .background(statusCaptionColor.opacity(0.14), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Mark as checked")
+                } else {
+                    captionLabel
                 }
             }
-
-            Text(project.name)
-                .font(.callout.weight(.medium))
-                .lineLimit(2)
-                .multilineTextAlignment(.center)
-                .frame(height: 38, alignment: .top)
+            .frame(height: 46, alignment: .top)
         }
-        .frame(width: 132, height: 136)
-        .padding(.vertical, 8)
-        .background(isSelected ? Color.accentColor.opacity(0.14) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
-        .overlay {
-            if isSelected {
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color.accentColor.opacity(0.45), lineWidth: 1)
-            }
+        .frame(width: 124)
+        .padding(.vertical, 12)
+        .padding(.horizontal, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(isHovering ? Color.primary.opacity(0.045) : Color.clear)
+        )
+        .onHover { isHovering = $0 }
+    }
+
+    // Only live activity sits on the icon itself; results moved to the
+    // caption under the name.
+    @ViewBuilder
+    private var statusBadge: some View {
+        switch status {
+        case .running:
+            PulsingDot(color: .green)
+        case .preparing:
+            PulsingDot(color: .yellow)
+        case .needsAttention, .finished, .idle:
+            EmptyView()
         }
     }
 
-    private var iconFill: LinearGradient {
-        LinearGradient(
-            colors: [.teal, .indigo],
+    private var needsAcknowledgment: Bool {
+        switch status {
+        case .finished, .needsAttention:
+            return !state.acknowledged
+        default:
+            return false
+        }
+    }
+
+    private var captionLabel: some View {
+        HStack(spacing: 3) {
+            if let icon = statusCaptionIcon {
+                Image(systemName: icon)
+                    .font(.system(size: 9))
+            }
+
+            Text(statusCaption)
+                .font(.system(size: 10.5))
+                .lineLimit(1)
+        }
+        .foregroundStyle(statusCaptionColor)
+    }
+
+    private var statusCaption: String {
+        switch status {
+        case .idle:
+            return " "
+        case .preparing:
+            return "Checking..."
+        case .running:
+            if let port = state.activeWebPort {
+                return "Running · :\(port)"
+            }
+            return state.activeActionName.map { "Running · \($0)" } ?? "Running"
+        case .finished:
+            return "Completed"
+        case .needsAttention:
+            return "Needs attention"
+        }
+    }
+
+    private var statusCaptionIcon: String? {
+        switch status {
+        case .finished:
+            return state.acknowledged ? "checkmark.circle" : "checkmark.circle.fill"
+        case .needsAttention:
+            return state.acknowledged ? "checkmark.circle" : "exclamationmark.circle.fill"
+        default:
+            return nil
+        }
+    }
+
+    private var statusCaptionColor: Color {
+        // Acknowledged results fade to gray; unseen ones keep their color.
+        switch status {
+        case .running:
+            return .green
+        case .finished:
+            return state.acknowledged ? .secondary : .green
+        case .needsAttention:
+            return state.acknowledged ? .secondary : .orange
+        default:
+            return .secondary
+        }
+    }
+}
+
+private struct RunStopOverlay: View {
+    let isRunning: Bool
+    let isPreparing: Bool
+    let toggle: () -> Void
+
+    var body: some View {
+        Button(action: toggle) {
+            ZStack {
+                Circle()
+                    .fill(.black.opacity(0.45))
+                    .background(.ultraThinMaterial, in: Circle())
+
+                Image(systemName: isRunning ? "stop.fill" : "play.fill")
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundStyle(.white)
+            }
+            .frame(width: 42, height: 42)
+        }
+        .buttonStyle(.plain)
+        .disabled(isPreparing)
+        .help(isRunning ? "Stop" : "Run")
+    }
+}
+
+struct PulsingDot: View {
+    let color: Color
+    @State private var pulsing = false
+
+    var body: some View {
+        Circle()
+            .fill(color)
+            .frame(width: 13, height: 13)
+            .overlay(Circle().stroke(Color(nsColor: .windowBackgroundColor), lineWidth: 2))
+            .background(
+                Circle()
+                    .fill(color.opacity(0.4))
+                    .scaleEffect(pulsing ? 2.0 : 1.0)
+                    .opacity(pulsing ? 0 : 0.8)
+                    .animation(.easeOut(duration: 1.2).repeatForever(autoreverses: false), value: pulsing)
+            )
+            .onAppear { pulsing = true }
+    }
+}
+
+// MARK: - Icon
+
+/// Project identity icon: the manifest's icon image when it exists, otherwise
+/// a deterministic gradient derived from the project name with its initials.
+struct ProjectIconBadge: View {
+    let project: AirstripProject
+    let size: CGFloat
+
+    var body: some View {
+        Group {
+            if let image = customIcon {
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            } else {
+                RoundedRectangle(cornerRadius: size * 0.225, style: .continuous)
+                    .fill(gradient)
+                    .overlay {
+                        Text(initials)
+                            .font(.system(size: size * 0.36, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.95))
+                    }
+                    .overlay {
+                        RoundedRectangle(cornerRadius: size * 0.225, style: .continuous)
+                            .strokeBorder(
+                                LinearGradient(
+                                    colors: [.white.opacity(0.35), .white.opacity(0.05)],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                ),
+                                lineWidth: 1
+                            )
+                    }
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: size * 0.225, style: .continuous))
+    }
+
+    private var customIcon: NSImage? {
+        guard let iconName = project.manifest.icon, !iconName.isEmpty else { return nil }
+        let url = project.path.appendingPathComponent(iconName)
+        let key = url.path as NSString
+        if let cached = Self.iconCache.object(forKey: key) {
+            return cached
+        }
+        guard let image = NSImage(contentsOf: url) else { return nil }
+        Self.iconCache.setObject(image, forKey: key)
+        return image
+    }
+
+    private static let iconCache = NSCache<NSString, NSImage>()
+
+    private var initials: String {
+        let words = project.name
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+        let letters = words.prefix(2).compactMap(\.first)
+        if letters.isEmpty {
+            return "?"
+        }
+        return letters.map(String.init).joined().uppercased()
+    }
+
+    private var gradient: LinearGradient {
+        ProjectTint.gradient(for: project.name)
+    }
+}
+
+/// Stable per-project colors shared by tiles, tab groups, and headers.
+enum ProjectTint {
+    private static let palette: [(Color, Color)] = [
+        (.blue, .indigo),
+        (.teal, .blue),
+        (.indigo, .purple),
+        (.orange, .pink),
+        (.green, .teal),
+        (.pink, .purple),
+        (.cyan, .blue),
+        (.purple, .blue)
+    ]
+
+    static func colors(for name: String) -> (Color, Color) {
+        // hashValue is randomly seeded per launch; use a stable digest so a
+        // project keeps the same color across launches.
+        let digest = name.unicodeScalars.reduce(into: UInt64(5381)) { result, scalar in
+            result = result &* 33 &+ UInt64(scalar.value)
+        }
+        return palette[Int(digest % UInt64(palette.count))]
+    }
+
+    static func color(for name: String) -> Color {
+        colors(for: name).0
+    }
+
+    static func gradient(for name: String) -> LinearGradient {
+        let pair = colors(for: name)
+        return LinearGradient(
+            colors: [pair.0, pair.1],
             startPoint: .topLeading,
             endPoint: .bottomTrailing
         )

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds a Release Airstrip.app and zips it for sharing (AirDrop, USB, etc).
+# Builds a Release Airstrip.app, then creates both zip and dmg artifacts.
 # Usage: Scripts/package-app.sh
 set -euo pipefail
 
@@ -7,6 +7,7 @@ cd "$(dirname "$0")/.."
 
 DIST_DIR="dist"
 DERIVED="$DIST_DIR/DerivedData"
+STAGING="$DIST_DIR/dmg-staging"
 
 rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR"
@@ -18,6 +19,7 @@ xcodebuild \
     -derivedDataPath "$DERIVED" \
     CODE_SIGN_IDENTITY="-" \
     CODE_SIGNING_REQUIRED=NO \
+    CODE_SIGNING_ALLOWED=NO \
     build
 
 APP="$DERIVED/Build/Products/Release/Airstrip.app"
@@ -27,10 +29,26 @@ if [ ! -d "$APP" ]; then
 fi
 
 ditto -c -k --keepParent "$APP" "$DIST_DIR/Airstrip.zip"
+
+mkdir -p "$STAGING"
+ditto "$APP" "$STAGING/Airstrip.app"
+ln -s /Applications "$STAGING/Applications"
+
+hdiutil create \
+    -volname "Airstrip" \
+    -srcfolder "$STAGING" \
+    -ov \
+    -format UDZO \
+    "$DIST_DIR/Airstrip.dmg"
+
 rm -rf "$DERIVED"
+rm -rf "$STAGING"
 
 echo
-echo "Done: $DIST_DIR/Airstrip.zip"
-echo "Send it over AirDrop. On the other Mac: unzip, drag Airstrip.app to"
-echo "Applications, then right-click it and choose Open the first time"
-echo "(it is not notarized, so a normal double-click is blocked once)."
+echo "Done:"
+echo "  $DIST_DIR/Airstrip.zip"
+echo "  $DIST_DIR/Airstrip.dmg"
+echo
+echo "For another Mac: send Airstrip.dmg, open it, drag Airstrip.app to"
+echo "Applications, then right-click Airstrip.app and choose Open the first time."
+echo "This build is not notarized, so the first normal double-click may be blocked."

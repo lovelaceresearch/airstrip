@@ -10,6 +10,10 @@ final class ProjectStore: ObservableObject {
     @Published var runtimeStates: [AirstripProject.ID: ProjectRuntimeState] = [:]
     @Published var lastError: String?
 
+    /// Set when a freshly started web server is ready to be shown; the UI
+    /// observes this to open the project's embedded web tab.
+    @Published var pendingWebFocus: AirstripProject.ID?
+
     private var processes: [AirstripProject.ID: Process] = [:]
     private var projectsFolderSource: DispatchSourceFileSystemObject?
     private var projectsFolderDescriptor: CInt = -1
@@ -166,6 +170,36 @@ final class ProjectStore: ObservableObject {
         }
     }
 
+    func clearLog(for project: AirstripProject) {
+        var state = runtimeStates[project.id] ?? ProjectRuntimeState()
+        state.runs = []
+        state.lastExitCode = nil
+        state.acknowledged = true
+        runtimeStates[project.id] = state
+    }
+
+    func acknowledge(_ id: AirstripProject.ID) {
+        guard var state = runtimeStates[id], !state.acknowledged else { return }
+        state.acknowledged = true
+        runtimeStates[id] = state
+    }
+
+    func updateNotes(_ project: AirstripProject, notes: String) {
+        guard let index = projects.firstIndex(where: { $0.id == project.id }) else { return }
+        projects[index].notes = notes.isEmpty ? nil : notes
+        save()
+    }
+
+    private func closeCurrentRun(for id: AirstripProject.ID, exitCode: Int32) {
+        var state = runtimeStates[id] ?? ProjectRuntimeState()
+        if let index = state.runs.lastIndex(where: { $0.isOpen }) {
+            state.runs[index].exitCode = exitCode
+            state.runs[index].endedAt = Date()
+        }
+        state.acknowledged = false
+        runtimeStates[id] = state
+    }
+
     func dismissMissingTools(for project: AirstripProject) {
         var state = runtimeStates[project.id] ?? ProjectRuntimeState()
         state.missingTools = []
@@ -198,17 +232,29 @@ final class ProjectStore: ObservableObject {
         guard processes[project.id] == nil else { return }
 
         let action = action ?? defaultAction(for: project)
+
+        // Open the run record before the port check so any port-fallback
+        // messages land inside this run's output.
+        var state = runtimeStates[project.id] ?? ProjectRuntimeState()
+        state.runs.append(RunRecord(actionName: action?.name ?? "Run", startedAt: Date()))
+        state.acknowledged = true
+        runtimeStates[project.id] = state
+
         let webLaunch = resolvedWebLaunch(for: action, projectID: project.id)
-        guard webLaunch.canRun else { return }
+        guard webLaunch.canRun else {
+            closeCurrentRun(for: project.id, exitCode: 1)
+            return
+        }
 
         let command = resolvedRunCommand(for: project, action: action, webPort: webLaunch.port)
-        var state = runtimeStates[project.id] ?? ProjectRuntimeState()
+        state = runtimeStates[project.id] ?? ProjectRuntimeState()
         state.isRunning = true
         state.lastExitCode = nil
         state.activeActionName = action?.name
         state.activeWebURL = webLaunch.url
         state.activeWebPort = webLaunch.port
-        state.log += "\n$ \(command)\n"
+        state.startedAt = Date()
+        state.lastCommand = command
         runtimeStates[project.id] = state
 
         let process = Process()
@@ -240,9 +286,15 @@ final class ProjectStore: ObservableObject {
             Task { @MainActor in
                 self?.processes[project.id] = nil
                 var state = self?.runtimeStates[project.id] ?? ProjectRuntimeState()
+                let status = process.terminationStatus
                 state.isRunning = false
-                state.lastExitCode = process.terminationStatus
-                state.log += "\nProcess exited with code \(process.terminationStatus).\n"
+                state.lastExitCode = status
+                state.startedAt = nil
+                state.acknowledged = false
+                if let index = state.runs.lastIndex(where: { $0.isOpen }) {
+                    state.runs[index].exitCode = status
+                    state.runs[index].endedAt = Date()
+                }
                 self?.runtimeStates[project.id] = state
             }
         }
@@ -255,10 +307,16 @@ final class ProjectStore: ObservableObject {
             }
         } catch {
             processes[project.id] = nil
+            appendLog("Failed to run: \(error.localizedDescription)\n", for: project.id)
             var state = runtimeStates[project.id] ?? ProjectRuntimeState()
             state.isRunning = false
             state.lastExitCode = -1
-            state.log += "Failed to run: \(error.localizedDescription)\n"
+            state.startedAt = nil
+            state.acknowledged = false
+            if let index = state.runs.lastIndex(where: { $0.isOpen }) {
+                state.runs[index].exitCode = -1
+                state.runs[index].endedAt = Date()
+            }
             runtimeStates[project.id] = state
         }
     }
@@ -662,7 +720,7 @@ final class ProjectStore: ObservableObject {
             try? await Task.sleep(for: .seconds(1))
             await MainActor.run {
                 if runtimeStates[projectID]?.isRunning == true {
-                    NSWorkspace.shared.open(url)
+                    pendingWebFocus = projectID
                 }
             }
         }
@@ -766,13 +824,29 @@ final class ProjectStore: ObservableObject {
         }
     }
 
-    private static let maxLogLength = 200_000
+    private static let maxRunOutputLength = 150_000
+    private static let maxRunRecords = 20
 
     private func appendLog(_ text: String, for id: AirstripProject.ID) {
         var state = runtimeStates[id] ?? ProjectRuntimeState()
-        state.log += text
-        if state.log.count > Self.maxLogLength {
-            state.log = "[older output trimmed]\n" + state.log.suffix(Self.maxLogLength * 3 / 4)
+        if let index = state.runs.lastIndex(where: { $0.isOpen }) {
+            state.runs[index].output += text
+            if state.runs[index].output.count > Self.maxRunOutputLength {
+                state.runs[index].output = "[older output trimmed]\n"
+                    + state.runs[index].output.suffix(Self.maxRunOutputLength * 3 / 4)
+            }
+        } else {
+            // Messages outside a run (e.g. missing tools) get their own entry.
+            state.runs.append(RunRecord(
+                actionName: "Airstrip",
+                startedAt: Date(),
+                endedAt: Date(),
+                output: text,
+                exitCode: 0
+            ))
+        }
+        if state.runs.count > Self.maxRunRecords {
+            state.runs.removeFirst(state.runs.count - Self.maxRunRecords)
         }
         runtimeStates[id] = state
     }
