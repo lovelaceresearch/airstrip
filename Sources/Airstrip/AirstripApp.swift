@@ -6,12 +6,14 @@ struct AirstripApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var store = ProjectStore()
     @StateObject private var dependencyManager = DependencyManager()
+    @StateObject private var ollamaManager = OllamaManager()
 
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environmentObject(store)
                 .environmentObject(dependencyManager)
+                .environmentObject(ollamaManager)
                 .frame(minWidth: 920, minHeight: 620)
                 .task {
                     store.load()

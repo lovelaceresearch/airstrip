@@ -14,6 +14,8 @@
 		A10000000000000000000005 /* ProjectConsole.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000015 /* ProjectConsole.swift */; };
 		A10000000000000000000006 /* ProjectStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000016 /* ProjectStore.swift */; };
 		A10000000000000000000007 /* Springboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000017 /* Springboard.swift */; };
+		A1000000000000000000000A /* OllamaService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001A /* OllamaService.swift */; };
+		A1000000000000000000000B /* OllamaChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001B /* OllamaChatView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -25,6 +27,8 @@
 		A10000000000000000000015 /* ProjectConsole.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectConsole.swift; sourceTree = "<group>"; };
 		A10000000000000000000016 /* ProjectStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectStore.swift; sourceTree = "<group>"; };
 		A10000000000000000000017 /* Springboard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Springboard.swift; sourceTree = "<group>"; };
+		A1000000000000000000001A /* OllamaService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OllamaService.swift; sourceTree = "<group>"; };
+		A1000000000000000000001B /* OllamaChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OllamaChatView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -81,6 +85,8 @@
 				A10000000000000000000015 /* ProjectConsole.swift */,
 				A10000000000000000000016 /* ProjectStore.swift */,
 				A10000000000000000000017 /* Springboard.swift */,
+				A1000000000000000000001A /* OllamaService.swift */,
+				A1000000000000000000001B /* OllamaChatView.swift */,
 			);
 			path = Airstrip;
 			sourceTree = "<group>";
@@ -161,6 +167,8 @@
 				A10000000000000000000005 /* ProjectConsole.swift in Sources */,
 				A10000000000000000000006 /* ProjectStore.swift in Sources */,
 				A10000000000000000000007 /* Springboard.swift in Sources */,
+				A1000000000000000000000A /* OllamaService.swift in Sources */,
+				A1000000000000000000000B /* OllamaChatView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

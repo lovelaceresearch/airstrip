@@ -127,13 +127,16 @@ struct ContentView: View {
         switch activeTab {
         case .springboard:
             ZStack {
-                LauncherGrid(openProject: openApp)
+                LauncherGrid(openProject: openApp, openOllama: openOllama)
 
                 if store.projects.isEmpty {
                     EmptyDropView()
                 }
             }
             .background(Color(nsColor: .underPageBackgroundColor))
+
+        case .ollama:
+            OllamaChatView()
 
         case .app(let id):
             if let project = store.projects.first(where: { $0.id == id }) {
@@ -160,6 +163,13 @@ struct ContentView: View {
         store.acknowledge(id)
     }
 
+    private func openOllama() {
+        if !openTabs.contains(.ollama) {
+            openTabs.insert(.ollama, at: 0)
+        }
+        activeTab = .ollama
+    }
+
     private func openWeb(_ id: AirstripProject.ID) {
         guard store.runtimeStates[id]?.activeWebURL != nil else {
             openApp(id)
@@ -183,6 +193,8 @@ struct ContentView: View {
         switch tab {
         case .springboard:
             return
+        case .ollama:
+            openTabs.removeAll { $0 == .ollama }
         case .app(let id):
             // Closing an app tab closes its grouped web tab too. The project
             // itself keeps running; the Running strip still shows it.
@@ -283,6 +295,12 @@ private struct WorkspaceTabStrip: View {
             SpringboardTabChip(isActive: activeTab == tab) {
                 onSelect(tab)
             }
+        case .ollama:
+            OllamaTabChip(
+                isActive: activeTab == tab,
+                select: { onSelect(tab) },
+                close: { onClose(tab) }
+            )
         case .app(let id), .web(let id):
             if let project = store.projects.first(where: { $0.id == id }) {
                 ProjectTabChip(
@@ -315,6 +333,44 @@ private struct SpringboardTabChip: View {
         }
         .padding(.horizontal, 11)
         .padding(.vertical, 6)
+        .background(chipBackground(isActive: isActive, isHovering: isHovering))
+        .contentShape(Rectangle())
+        .onTapGesture(perform: select)
+        .onHover { isHovering = $0 }
+    }
+}
+
+private struct OllamaTabChip: View {
+    let isActive: Bool
+    let select: () -> Void
+    let close: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 11))
+                .foregroundStyle(
+                    LinearGradient(colors: [.purple, .pink], startPoint: .top, endPoint: .bottom)
+                )
+
+            Text("Ollama Chat")
+                .font(.system(size: 11.5, weight: isActive ? .semibold : .regular))
+
+            Button(action: close) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 14, height: 14)
+                    .background(isHovering ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear), in: Circle())
+            }
+            .buttonStyle(.plain)
+            .opacity(isHovering || isActive ? 1 : 0)
+            .help("Close tab")
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
         .background(chipBackground(isActive: isActive, isHovering: isHovering))
         .contentShape(Rectangle())
         .onTapGesture(perform: select)

@@ -10,6 +10,22 @@ The intended user flow is:
 4. The automation appears as an icon.
 5. Double-click the icon to run it.
 
+## Built-in Ollama Chat
+
+The springboard includes an integrated "Ollama Chat" app that opens in its
+own tab like any other project:
+
+- If Ollama is installed but not running, Airstrip starts `ollama serve`
+  itself (and stops it again on quit if it started it).
+- Pick a model from the picker in the input bar; you can switch models
+  mid-conversation and the history carries over.
+- Press the + button next to the model picker to send the same prompt to
+  several models at once. The tab splits into one column per model.
+- The settings popover (slider icon) covers the persona (system prompt) and
+  the standard Ollama generation parameters: temperature, top-p, repeat
+  penalty, context window, seed, and keep-alive. "Show response stats"
+  prints token counts and speed under each answer, like `ollama --verbose`.
+
 ## Project Manifest
 
 Automation folders can include an `airstrip.json` file:

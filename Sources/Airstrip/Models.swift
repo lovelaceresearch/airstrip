@@ -130,6 +130,7 @@ struct ProjectRuntimeState: Equatable {
 /// embedded web view tab when it serves a local UI.
 enum WorkspaceTab: Hashable, Identifiable {
     case springboard
+    case ollama
     case app(AirstripProject.ID)
     case web(AirstripProject.ID)
 
@@ -137,6 +138,8 @@ enum WorkspaceTab: Hashable, Identifiable {
         switch self {
         case .springboard:
             return "springboard"
+        case .ollama:
+            return "ollama"
         case .app(let id):
             return "app-\(id.uuidString)"
         case .web(let id):
@@ -146,7 +149,7 @@ enum WorkspaceTab: Hashable, Identifiable {
 
     var projectID: AirstripProject.ID? {
         switch self {
-        case .springboard:
+        case .springboard, .ollama:
             return nil
         case .app(let id), .web(let id):
             return id

@@ -6,6 +6,7 @@ import SwiftUI
 struct LauncherGrid: View {
     @EnvironmentObject private var store: ProjectStore
     let openProject: (AirstripProject.ID) -> Void
+    let openOllama: () -> Void
 
     // Fixed column width and leading alignment: adaptive width ranges and
     // centered layout both make tiles slide around while the window resizes.
@@ -18,6 +19,8 @@ struct LauncherGrid: View {
     var body: some View {
         ScrollView {
             LazyVGrid(columns: columns, alignment: .leading, spacing: 22) {
+                OllamaTile(open: openOllama)
+
                 ForEach(store.projects) { project in
                     ProjectTile(project: project) {
                         openProject(project.id)
@@ -83,6 +86,83 @@ struct LauncherGrid: View {
 
         Button("Remove from Airstrip", role: .destructive) {
             store.remove(project)
+        }
+    }
+}
+
+// MARK: - Ollama tile
+
+/// Built-in chat app: rendered like any other tile but opens the integrated
+/// Ollama tab instead of running a project.
+private struct OllamaTile: View {
+    @EnvironmentObject private var ollama: OllamaManager
+    let open: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        VStack(spacing: 11) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 86 * 0.225, style: .continuous)
+                    .fill(LinearGradient(colors: [.purple, .pink], startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .overlay {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 32, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.95))
+                    }
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 86 * 0.225, style: .continuous)
+                            .strokeBorder(
+                                LinearGradient(
+                                    colors: [.white.opacity(0.35), .white.opacity(0.05)],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                ),
+                                lineWidth: 1
+                            )
+                    }
+                    .frame(width: 86, height: 86)
+                    .shadow(color: .black.opacity(isHovering ? 0.22 : 0.12), radius: isHovering ? 13 : 9, y: 5)
+                    .scaleEffect(isHovering ? 1.04 : 1)
+
+                if ollama.serverStatus.isRunning {
+                    PulsingDot(color: .green)
+                        .offset(x: 36, y: 36)
+                }
+            }
+            .frame(width: 92, height: 92)
+            .animation(.spring(response: 0.28, dampingFraction: 0.7), value: isHovering)
+
+            VStack(spacing: 3) {
+                Text("Ollama Chat")
+                    .font(.system(size: 13, weight: .medium))
+
+                Text(captionText)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(ollama.serverStatus.isRunning ? .green : .secondary)
+                    .lineLimit(1)
+            }
+            .frame(height: 46, alignment: .top)
+        }
+        .frame(width: 124)
+        .padding(.vertical, 12)
+        .padding(.horizontal, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(isHovering ? Color.primary.opacity(0.045) : Color.clear)
+        )
+        .onHover { isHovering = $0 }
+        .onTapGesture(perform: open)
+    }
+
+    private var captionText: String {
+        switch ollama.serverStatus {
+        case .running:
+            return "Running"
+        case .unknown:
+            return "Built-in chat"
+        default:
+            return ollama.serverStatus.label
         }
     }
 }
