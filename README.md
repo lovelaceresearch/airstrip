@@ -10,21 +10,40 @@ The intended user flow is:
 4. The automation appears as an icon.
 5. Double-click the icon to run it.
 
-## Built-in Ollama Chat
+## Dashboard
 
-The springboard includes an integrated "Ollama Chat" app that opens in its
-own tab like any other project:
+The springboard doubles as a dashboard. Above the app grid:
+
+- **Runtime** — Python, Homebrew, and Ollama status with one-click installs,
+  plus an on/off switch for the local Ollama server (also available from the
+  toolbar's Runtime button).
+- **Activity** — how many apps are running and how many results still need
+  checking.
+- **What Can I Run?** — a guide with examples of what works (Python scripts,
+  local web apps, CLI tools, AI automations) and what doesn't, plus a folder
+  checker that grades any folder before you import it.
+
+Projects added or removed in Finder are picked up automatically whenever
+Airstrip becomes the active app; there is no manual refresh button.
+
+## Built-in AI Studio
+
+The springboard includes an integrated "AI Studio" chat app that opens in
+its own tab like any other project:
 
 - If Ollama is installed but not running, Airstrip starts `ollama serve`
   itself (and stops it again on quit if it started it).
+- Cloud models work too: add API keys for OpenAI, Gemini, Claude, or
+  Mistral in the settings sheet. Keys live in the macOS Keychain.
 - Pick a model from the picker in the input bar; you can switch models
   mid-conversation and the history carries over.
 - Press the + button next to the model picker to send the same prompt to
-  several models at once. The tab splits into one column per model.
-- The settings popover (slider icon) covers the persona (system prompt) and
-  the standard Ollama generation parameters: temperature, top-p, repeat
-  penalty, context window, seed, and keep-alive. "Show response stats"
-  prints token counts and speed under each answer, like `ollama --verbose`.
+  several models — local and cloud mixed — at once. The tab splits into
+  one column per model and all responses stream live.
+- The settings sheet covers the persona (system prompt shared by all
+  models) and generation parameters: temperature, top-p, repeat penalty,
+  context window, seed, and keep-alive. "Show response stats" prints token
+  counts and speed under each answer, like `ollama --verbose`.
 
 ## Project Manifest
 
@@ -118,6 +137,24 @@ Stopping a project kills the entire process tree, including child processes the 
 - Dependency detection for Python, Homebrew, and Ollama
 - Homebrew install via visible Terminal script
 - Ollama install via Homebrew when available, otherwise the official macOS download page
+- AI Studio for local Ollama chat plus optional OpenAI, Gemini, Claude, and Mistral API keys
+
+## What Airstrip Can Run
+
+Airstrip is best for local automation folders that expose one or more commands:
+
+- Python scripts, including project-local virtual environments and `requirements.txt`
+- Shell commands declared in `airstrip.json`
+- Local web apps such as Streamlit, FastAPI, Flask, or any command that starts a server on a port
+- Ollama-backed projects that declare required local models
+
+It is not intended to run Windows/Linux-only binaries, repos with no runnable command, or tools that need admin-level installation unless the project declares those dependencies clearly.
+
+The Runtime popover includes a runability checker that summarizes imported projects and highlights obvious missing pieces such as Python, Ollama, or declared command-line tools.
+
+## AI Studio
+
+The built-in AI Studio can talk to local Ollama models and external providers. Add OpenAI, Gemini, Claude, or Mistral keys from AI Studio settings. API keys are stored in the macOS Keychain; model IDs stay editable because provider model names change over time.
 
 ## Install On Another Mac
 

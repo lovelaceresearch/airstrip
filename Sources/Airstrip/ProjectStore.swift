@@ -390,7 +390,7 @@ final class ProjectStore: ObservableObject {
         syncProjectsWithWorkspace()
     }
 
-    private func importProject(from sourceURL: URL) {
+    func importProject(from sourceURL: URL) {
         do {
             try ensureDirectories()
 

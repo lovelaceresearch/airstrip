@@ -18,27 +18,39 @@ struct LauncherGrid: View {
 
     var body: some View {
         ScrollView {
-            LazyVGrid(columns: columns, alignment: .leading, spacing: 22) {
-                OllamaTile(open: openOllama)
+            VStack(alignment: .leading, spacing: 20) {
+                DashboardHeader()
 
-                ForEach(store.projects) { project in
-                    ProjectTile(project: project) {
-                        openProject(project.id)
+                Text("Apps")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+
+                LazyVGrid(columns: columns, alignment: .leading, spacing: 22) {
+                    OllamaTile(open: openOllama)
+
+                    ForEach(store.projects) { project in
+                        ProjectTile(project: project) {
+                            openProject(project.id)
+                        }
+                        .onTapGesture(count: 2) {
+                            openProject(project.id)
+                            store.toggle(project)
+                        }
+                        .onTapGesture {
+                            openProject(project.id)
+                        }
+                        .contextMenu {
+                            tileMenu(for: project)
+                        }
                     }
-                    .onTapGesture(count: 2) {
-                        openProject(project.id)
-                        store.toggle(project)
-                    }
-                    .onTapGesture {
-                        openProject(project.id)
-                    }
-                    .contextMenu {
-                        tileMenu(for: project)
-                    }
+                }
+
+                if store.projects.isEmpty {
+                    ImportHintCard()
                 }
             }
             .padding(.horizontal, 28)
-            .padding(.vertical, 26)
+            .padding(.vertical, 24)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
@@ -90,10 +102,57 @@ struct LauncherGrid: View {
     }
 }
 
-// MARK: - Ollama tile
+// MARK: - Import hint
 
-/// Built-in chat app: rendered like any other tile but opens the integrated
-/// Ollama tab instead of running a project.
+/// Shown under the grid when no automations are imported yet; the dashboard
+/// stays visible above it.
+private struct ImportHintCard: View {
+    @EnvironmentObject private var store: ProjectStore
+
+    var body: some View {
+        HStack(spacing: 16) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6, 5]))
+                    .foregroundStyle(.quaternary)
+                    .frame(width: 58, height: 58)
+
+                Image(systemName: "arrow.down.doc")
+                    .font(.system(size: 22, weight: .light))
+                    .foregroundStyle(.secondary)
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Drop an automation folder anywhere in this window")
+                    .font(.system(size: 13, weight: .semibold))
+
+                Text("It becomes an app icon you can run with one click.")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Button {
+                store.importWithPanel()
+            } label: {
+                Label("Choose Folder...", systemImage: "folder.badge.plus")
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .padding(16)
+        .background(Color(nsColor: .windowBackgroundColor).opacity(0.65), in: RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(.quaternary, lineWidth: 1)
+        }
+    }
+}
+
+// MARK: - AI Studio tile
+
+/// Built-in AI app: rendered like any other tile but opens the integrated
+/// AI Studio tab instead of running a project.
 private struct OllamaTile: View {
     @EnvironmentObject private var ollama: OllamaManager
     let open: () -> Void
@@ -104,7 +163,7 @@ private struct OllamaTile: View {
         VStack(spacing: 11) {
             ZStack {
                 RoundedRectangle(cornerRadius: 86 * 0.225, style: .continuous)
-                    .fill(LinearGradient(colors: [.purple, .pink], startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .fill(LinearGradient(colors: [.blue, .teal], startPoint: .topLeading, endPoint: .bottomTrailing))
                     .overlay {
                         Image(systemName: "sparkles")
                             .font(.system(size: 32, weight: .semibold))
@@ -134,7 +193,7 @@ private struct OllamaTile: View {
             .animation(.spring(response: 0.28, dampingFraction: 0.7), value: isHovering)
 
             VStack(spacing: 3) {
-                Text("Ollama Chat")
+                Text("AI Studio")
                     .font(.system(size: 13, weight: .medium))
 
                 Text(captionText)
@@ -160,7 +219,7 @@ private struct OllamaTile: View {
         case .running:
             return "Running"
         case .unknown:
-            return "Built-in chat"
+            return "Local + API models"
         default:
             return ollama.serverStatus.label
         }

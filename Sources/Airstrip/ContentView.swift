@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -50,13 +51,6 @@ struct ContentView: View {
                     RuntimeHealthButton()
 
                     Button {
-                        store.refreshProjectsFromDisk()
-                    } label: {
-                        Label("Rescan Folder", systemImage: "arrow.triangle.2.circlepath")
-                    }
-                    .help("Re-scan the projects folder: picks up apps that were added or removed in Finder")
-
-                    Button {
                         store.revealAirstripFolder()
                     } label: {
                         Label("Open Projects Folder", systemImage: "folder")
@@ -99,6 +93,11 @@ struct ContentView: View {
             store.pendingWebFocus = nil
             openWeb(id)
         }
+        // Folders added or removed in Finder show up whenever the user comes
+        // back to Airstrip; no manual refresh button needed.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            store.refreshProjectsFromDisk()
+        }
         .overlay {
             if isDropTargeted {
                 DropTargetOverlay()
@@ -126,14 +125,8 @@ struct ContentView: View {
     private var tabContent: some View {
         switch activeTab {
         case .springboard:
-            ZStack {
-                LauncherGrid(openProject: openApp, openOllama: openOllama)
-
-                if store.projects.isEmpty {
-                    EmptyDropView()
-                }
-            }
-            .background(Color(nsColor: .underPageBackgroundColor))
+            LauncherGrid(openProject: openApp, openOllama: openOllama)
+                .background(Color(nsColor: .underPageBackgroundColor))
 
         case .ollama:
             OllamaChatView()
@@ -352,10 +345,10 @@ private struct OllamaTabChip: View {
             Image(systemName: "sparkles")
                 .font(.system(size: 11))
                 .foregroundStyle(
-                    LinearGradient(colors: [.purple, .pink], startPoint: .top, endPoint: .bottom)
+                    LinearGradient(colors: [.blue, .teal], startPoint: .top, endPoint: .bottom)
                 )
 
-            Text("Ollama Chat")
+            Text("AI Studio")
                 .font(.system(size: 11.5, weight: isActive ? .semibold : .regular))
 
             Button(action: close) {
@@ -555,6 +548,19 @@ private struct RunningChip: View {
 
 // MARK: - Runtime health
 
+/// Kills the macOS focus ring that otherwise lingers on toolbar buttons
+/// after their popover closes.
+extension View {
+    @ViewBuilder
+    func noFocusRing() -> some View {
+        if #available(macOS 14.0, *) {
+            self.focusEffectDisabled()
+        } else {
+            self.focusable(false)
+        }
+    }
+}
+
 private struct RuntimeHealthButton: View {
     @EnvironmentObject private var dependencyManager: DependencyManager
     @State private var showPopover = false
@@ -577,6 +583,8 @@ private struct RuntimeHealthButton: View {
                 .foregroundStyle(symbolColor)
         }
         .help("Python, Homebrew, and Ollama status")
+        .buttonStyle(.borderless)
+        .noFocusRing()
         .popover(isPresented: $showPopover, arrowEdge: .bottom) {
             RuntimeHealthPopover()
         }
@@ -593,11 +601,15 @@ private struct RuntimeHealthButton: View {
     }
 }
 
+/// Compact status panel: the three runtime dependencies plus a switch for
+/// the local Ollama server. Capability details live on the dashboard.
 private struct RuntimeHealthPopover: View {
+    @EnvironmentObject private var store: ProjectStore
     @EnvironmentObject private var dependencyManager: DependencyManager
+    @EnvironmentObject private var ollama: OllamaManager
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Text("Runtime")
                     .font(.headline)
@@ -606,11 +618,14 @@ private struct RuntimeHealthPopover: View {
 
                 Button {
                     dependencyManager.refresh()
+                    ollama.refreshServerStatus()
+                    store.refreshProjectsFromDisk()
                 } label: {
-                    Image(systemName: "arrow.clockwise")
+                    Label("Check Again", systemImage: "arrow.clockwise")
                 }
                 .buttonStyle(.borderless)
-                .help("Check again")
+                .noFocusRing()
+                .help("Check dependencies, the Ollama server, and project folders again")
             }
 
             RuntimeRow(
@@ -633,13 +648,80 @@ private struct RuntimeHealthPopover: View {
                 status: dependencyManager.ollama,
                 install: dependencyManager.installOllama
             )
+
+            Divider()
+
+            OllamaServerSwitch()
         }
         .padding(16)
-        .frame(width: 300)
+        .frame(width: 340)
+        .noFocusRing()
     }
 }
 
-private struct RuntimeRow: View {
+/// On/off switch for the local Ollama server, shared by the health popover
+/// and the dashboard.
+struct OllamaServerSwitch: View {
+    @EnvironmentObject private var ollama: OllamaManager
+
+    private var isOn: Binding<Bool> {
+        Binding(
+            get: {
+                ollama.serverStatus.isRunning || ollama.serverStatus == .starting
+            },
+            set: { on in
+                if on {
+                    ollama.startServe()
+                } else {
+                    ollama.stopServer()
+                }
+            }
+        )
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Circle()
+                .fill(color)
+                .frame(width: 8, height: 8)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Ollama Server")
+                    .font(.system(size: 12, weight: .medium))
+
+                Text(ollama.serverStatus.label)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            if ollama.serverStatus == .notInstalled {
+                Text("Not installed")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+            } else {
+                Toggle("", isOn: isOn)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .labelsHidden()
+                    .disabled(ollama.serverStatus == .unknown || ollama.serverStatus == .starting)
+                    .help(ollama.serverStatus.isRunning ? "Stop the Ollama server" : "Start the Ollama server")
+            }
+        }
+    }
+
+    private var color: Color {
+        switch ollama.serverStatus {
+        case .running: return .green
+        case .starting, .unknown: return .yellow
+        case .stopped, .notInstalled: return .orange
+        }
+    }
+}
+
+struct RuntimeRow: View {
     let name: String
     let detail: String
     let status: DependencyStatus
@@ -691,45 +773,7 @@ private struct RuntimeRow: View {
     }
 }
 
-// MARK: - Empty + drop states
-
-private struct EmptyDropView: View {
-    @EnvironmentObject private var store: ProjectStore
-
-    var body: some View {
-        VStack(spacing: 18) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 26, style: .continuous)
-                    .strokeBorder(style: StrokeStyle(lineWidth: 2, dash: [8, 6]))
-                    .foregroundStyle(.quaternary)
-                    .frame(width: 110, height: 110)
-
-                Image(systemName: "arrow.down.doc")
-                    .font(.system(size: 38, weight: .light))
-                    .foregroundStyle(.secondary)
-            }
-
-            VStack(spacing: 6) {
-                Text("Drop an automation folder here")
-                    .font(.title3.weight(.semibold))
-
-                Text("It becomes an app icon you can run with one click.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-
-            Button {
-                store.importWithPanel()
-            } label: {
-                Label("Choose Folder...", systemImage: "folder.badge.plus")
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-        }
-        .multilineTextAlignment(.center)
-        .padding(40)
-    }
-}
+// MARK: - Drop state
 
 private struct DropTargetOverlay: View {
     var body: some View {
