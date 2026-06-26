@@ -336,6 +336,7 @@ final class OllamaManager: ObservableObject {
                 self?.stopSpawnedServer()
             }
         }
+        refreshServerStatus()
     }
 
     private func saveSettings() {

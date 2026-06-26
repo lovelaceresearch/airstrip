@@ -13,6 +13,67 @@ final class ProjectStore: ObservableObject {
     /// Set when a freshly started web server is ready to be shown; the UI
     /// observes this to open the project's embedded web tab.
     @Published var pendingWebFocus: AirstripProject.ID?
+    @Published var activePorts: [ActivePortInfo] = []
+    @Published var isSidebarOpen = false
+    @Published var downloads: [AirstripDownload] = []
+
+    func addDownload(id: UUID, filename: String, targetURL: URL) {
+        let download = AirstripDownload(
+            id: id,
+            filename: filename,
+            targetURL: targetURL,
+            progress: 0.0,
+            isCompleted: false,
+            errorDescription: nil
+        )
+        downloads.append(download)
+    }
+
+    func updateDownloadProgress(id: UUID, progress: Double) {
+        if let idx = downloads.firstIndex(where: { $0.id == id }) {
+            let current = downloads[idx]
+            downloads[idx] = AirstripDownload(
+                id: current.id,
+                filename: current.filename,
+                targetURL: current.targetURL,
+                progress: progress,
+                isCompleted: current.isCompleted,
+                errorDescription: current.errorDescription
+            )
+        }
+    }
+
+    func completeDownload(id: UUID) {
+        if let idx = downloads.firstIndex(where: { $0.id == id }) {
+            let current = downloads[idx]
+            downloads[idx] = AirstripDownload(
+                id: current.id,
+                filename: current.filename,
+                targetURL: current.targetURL,
+                progress: 1.0,
+                isCompleted: true,
+                errorDescription: nil
+            )
+        }
+    }
+
+    func failDownload(id: UUID, errorDescription: String) {
+        if let idx = downloads.firstIndex(where: { $0.id == id }) {
+            let current = downloads[idx]
+            downloads[idx] = AirstripDownload(
+                id: current.id,
+                filename: current.filename,
+                targetURL: current.targetURL,
+                progress: current.progress,
+                isCompleted: false,
+                errorDescription: errorDescription
+            )
+        }
+    }
+
+    func clearDownloads() {
+        downloads.removeAll()
+    }
 
     private var processes: [AirstripProject.ID: Process] = [:]
     private var projectsFolderSource: DispatchSourceFileSystemObject?
@@ -89,7 +150,7 @@ final class ProjectStore: ObservableObject {
     func importWithPanel() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
-        panel.canChooseFiles = false
+        panel.canChooseFiles = true
         panel.allowsMultipleSelection = true
         panel.prompt = "Import"
 
@@ -255,6 +316,7 @@ final class ProjectStore: ObservableObject {
         state.activeWebPort = webLaunch.port
         state.startedAt = Date()
         state.lastCommand = command
+        state.detectedIssue = nil
         runtimeStates[project.id] = state
 
         let process = Process()
@@ -296,6 +358,7 @@ final class ProjectStore: ObservableObject {
                     state.runs[index].endedAt = Date()
                 }
                 self?.runtimeStates[project.id] = state
+                self?.refreshActivePorts()
             }
         }
 
@@ -304,6 +367,10 @@ final class ProjectStore: ObservableObject {
             processes[project.id] = process
             if let url = webLaunch.url, webLaunch.openOnStart {
                 openWebURLWhenReady(url, projectID: project.id)
+            }
+            refreshActivePorts()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                self?.refreshActivePorts()
             }
         } catch {
             processes[project.id] = nil
@@ -318,6 +385,7 @@ final class ProjectStore: ObservableObject {
                 state.runs[index].endedAt = Date()
             }
             runtimeStates[project.id] = state
+            refreshActivePorts()
         }
     }
 
@@ -343,6 +411,10 @@ final class ProjectStore: ObservableObject {
                 kill(-pid, SIGKILL)
             }
         }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.refreshActivePorts()
+        }
     }
 
     func openWebUI(for project: AirstripProject) {
@@ -356,6 +428,91 @@ final class ProjectStore: ObservableObject {
 
     func stopWebServer(_ server: RunningWebServer) {
         stop(server.project)
+    }
+
+    func retryWithSuggestedPort(_ project: AirstripProject, issue: RuntimeIssue) {
+        guard let suggestedPort = issue.suggestedPort else { return }
+        let currentAction = actions(for: project).first {
+            $0.name == runtimeStates[project.id]?.activeActionName
+        } ?? defaultAction(for: project)
+        guard var action = currentAction else { return }
+
+        if var web = action.web {
+            web.port = suggestedPort
+            web.allowPortFallback = true
+            action.web = web
+        } else {
+            action.web = WebServerConfig(port: suggestedPort, openPath: "/", openOnStart: true, allowPortFallback: true)
+        }
+        action.name = "\(action.name) :\(suggestedPort)"
+
+        appendLog("Retrying on port \(suggestedPort). Airstrip will set PORT and AIRSTRIP_PORT to \(suggestedPort).\n", for: project.id)
+        run(project, action: action)
+    }
+
+    func terminateConflictingPortAndRetry(_ project: AirstripProject, issue: RuntimeIssue) {
+        guard let port = issue.port else { return }
+        appendLog("Stopping listener on port \(port), then retrying...\n", for: project.id)
+        terminatePort(port)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+            self?.refreshActivePorts()
+            self?.run(project, action: self?.defaultAction(for: project))
+        }
+    }
+
+    func errorFixPrompt(for project: AirstripProject, issue: RuntimeIssue, target: AIChatTarget) -> String {
+        let state = runtimeStates[project.id] ?? ProjectRuntimeState()
+        let action = actions(for: project).first { $0.name == state.activeActionName } ?? defaultAction(for: project)
+        let web = action?.web
+        let portInfo = issue.port.flatMap { port in activePorts.first { $0.port == port } }
+        let occupant = portInfo.map { info -> String in
+            var parts = ["port \(info.port)"]
+            if let name = info.processName { parts.append("process \(name)") }
+            if let pid = info.pid { parts.append("pid \(pid)") }
+            if info.isAirstripProject, let name = info.airstripProjectName {
+                parts.append("Airstrip project \(name)")
+            }
+            return parts.joined(separator: ", ")
+        } ?? "No current listener was found in Airstrip's last port scan."
+
+        return """
+        You are helping repair an Airstrip project run failure. Stay within the project and Airstrip manifest; do not suggest destructive commands.
+
+        Project:
+        - Name: \(project.name)
+        - Path: \(project.path.path)
+        - Selected AI: \(target.displayName)
+
+        Failure:
+        - Kind: \(issue.kind.title)
+        - Summary: \(issue.summary)
+        - Port Airstrip expected: \(issue.port.map(String.init) ?? "none")
+        - Suggested free port: \(issue.suggestedPort.map(String.init) ?? "none found")
+        - Port scan: \(occupant)
+
+        Airstrip context:
+        - Airstrip injects PORT and AIRSTRIP_PORT for web actions.
+        - Airstrip replaces {PORT} in commands before launch.
+        - Airstrip can refresh active ports, stop a confirmed port listener, and retry the project with a suggested port.
+        - Airstrip's deterministic Fix Error panel has already offered kill-and-retry and suggested-port retry before this AI escalation.
+        - Prefer making the app read PORT/AIRSTRIP_PORT or changing airstrip.json to use {PORT}.
+        - If a process must be stopped, ask the user to confirm the exact process and port first.
+        - A good durable fix is better than repeatedly killing processes.
+
+        Manifest web config:
+        - port: \((web?.port).map(String.init) ?? "none")
+        - allowPortFallback: \((web?.allowPortFallback).map(String.init) ?? "default true")
+        - openPath: \(web?.openPath ?? "/")
+
+        Command Airstrip ran:
+        \(state.lastCommand ?? issue.command ?? "unknown")
+
+        Recent terminal excerpt:
+        \(issue.excerpt)
+
+        Please diagnose the root cause, propose the smallest safe change, and include exact file edits or Airstrip steps. If the app is hard-coding a port, rewrite it to read PORT first.
+        """
     }
 
     func remove(_ project: AirstripProject) {
@@ -395,15 +552,37 @@ final class ProjectStore: ObservableObject {
             try ensureDirectories()
 
             var isDirectory: ObjCBool = false
-            guard fileManager.fileExists(atPath: sourceURL.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            guard fileManager.fileExists(atPath: sourceURL.path, isDirectory: &isDirectory) else {
                 return
             }
 
-            let manifest = loadManifest(from: sourceURL)
-            let displayName = manifest.name ?? sourceURL.deletingPathExtension().lastPathComponent
-            let destination = uniqueDestinationURL(for: displayName)
+            let displayName: String
+            let destination: URL
 
-            try copyProjectFolder(from: sourceURL, to: destination)
+            if isDirectory.boolValue {
+                // Folder import
+                let manifest = loadManifest(from: sourceURL)
+                displayName = manifest.name ?? sourceURL.deletingPathExtension().lastPathComponent
+                destination = uniqueDestinationURL(for: displayName)
+                try copyProjectFolder(from: sourceURL, to: destination)
+            } else {
+                // File import
+                displayName = sourceURL.deletingPathExtension().lastPathComponent
+                destination = uniqueDestinationURL(for: displayName)
+                try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
+                
+                let fileDestination = destination.appendingPathComponent(sourceURL.lastPathComponent)
+                try fileManager.copyItem(at: sourceURL, to: fileDestination)
+
+                let ext = sourceURL.pathExtension.lowercased()
+                if ext == "tsx" || ext == "jsx" || ext == "ts" || ext == "js" {
+                    try bootstrapViteProject(in: destination, sourceFileName: sourceURL.lastPathComponent)
+                } else if ext == "html" {
+                    try bootstrapHtmlProject(in: destination, sourceFileName: sourceURL.lastPathComponent)
+                } else if ext == "py" {
+                    try bootstrapPythonProject(in: destination, sourceFileName: sourceURL.lastPathComponent)
+                }
+            }
 
             let copiedManifest = loadManifest(from: destination)
             let project = AirstripProject(
@@ -418,6 +597,165 @@ final class ProjectStore: ObservableObject {
         } catch {
             appendSystemLog("Failed to import \(sourceURL.lastPathComponent): \(error.localizedDescription)")
         }
+    }
+
+    private func bootstrapViteProject(in folder: URL, sourceFileName: String) throws {
+        let packageJson = """
+        {
+          "name": "airstrip-vite-app",
+          "private": true,
+          "version": "0.0.0",
+          "type": "module",
+          "scripts": {
+            "dev": "vite --host",
+            "build": "vite build"
+          },
+          "dependencies": {
+            "react": "^18.3.1",
+            "react-dom": "^18.3.1",
+            "lucide-react": "^0.395.0"
+          },
+          "devDependencies": {
+            "@types/react": "^18.3.3",
+            "@types/react-dom": "^18.3.0",
+            "@vitejs/plugin-react": "^4.3.1",
+            "autoprefixer": "^10.4.19",
+            "postcss": "^8.4.39",
+            "tailwindcss": "^3.4.4",
+            "typescript": "^5.2.2",
+            "vite": "^5.3.1"
+          }
+        }
+        """
+        try packageJson.write(to: folder.appendingPathComponent("package.json"), atomically: true, encoding: .utf8)
+
+        let viteConfig = """
+        import { defineConfig } from 'vite'
+        import react from '@vitejs/plugin-react'
+
+        export default defineConfig({
+          plugins: [react()],
+        })
+        """
+        try viteConfig.write(to: folder.appendingPathComponent("vite.config.ts"), atomically: true, encoding: .utf8)
+
+        let postcssConfig = """
+        export default {
+          plugins: {
+            tailwindcss: {},
+            autoprefixer: {},
+          },
+        }
+        """
+        try postcssConfig.write(to: folder.appendingPathComponent("postcss.config.js"), atomically: true, encoding: .utf8)
+
+        let tailwindConfig = """
+        /** @type {import('tailwindcss').Config} */
+        export default {
+          content: [
+            "./index.html",
+            "./src/**/*.{js,ts,jsx,tsx}",
+            "./*.{js,ts,jsx,tsx}"
+          ],
+          theme: {
+            extend: {},
+          },
+          plugins: [],
+        }
+        """
+        try tailwindConfig.write(to: folder.appendingPathComponent("tailwind.config.js"), atomically: true, encoding: .utf8)
+
+        let indexHtml = """
+        <!doctype html>
+        <html lang="en">
+          <head>
+            <meta charset="UTF-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+            <title>Airstrip App</title>
+          </head>
+          <body class="bg-zinc-950 text-zinc-100">
+            <div id="root"></div>
+            <script type="module" src="/src/main.tsx"></script>
+          </body>
+        </html>
+        """
+        try indexHtml.write(to: folder.appendingPathComponent("index.html"), atomically: true, encoding: .utf8)
+
+        let srcFolder = folder.appendingPathComponent("src")
+        try fileManager.createDirectory(at: srcFolder, withIntermediateDirectories: true)
+
+        let indexCss = """
+        @tailwind base;
+        @tailwind components;
+        @tailwind utilities;
+        """
+        try indexCss.write(to: srcFolder.appendingPathComponent("index.css"), atomically: true, encoding: .utf8)
+
+        let mainTsx = """
+        import React from 'react'
+        import ReactDOM from 'react-dom/client'
+        import App from '../\(sourceFileName)'
+        import './index.css'
+
+        ReactDOM.createRoot(document.getElementById('root')!).render(
+          <React.StrictMode>
+            <App />
+          </React.StrictMode>,
+        )
+        """
+        try mainTsx.write(to: srcFolder.appendingPathComponent("main.tsx"), atomically: true, encoding: .utf8)
+
+        let manifest = """
+        {
+          "name": "\(folder.deletingPathExtension().lastPathComponent)",
+          "run": "if [ ! -d node_modules ]; then npm install; fi && npm run dev -- --port {PORT}",
+          "actions": [
+            {
+              "name": "Start Dev Server",
+              "command": "if [ ! -d node_modules ]; then npm install; fi && npm run dev -- --port {PORT}",
+              "isDefault": true,
+              "web": {
+                "port": 5173,
+                "openPath": "/",
+                "openOnStart": true
+              }
+            }
+          ]
+        }
+        """
+        try manifest.write(to: folder.appendingPathComponent("airstrip.json"), atomically: true, encoding: .utf8)
+    }
+
+    private func bootstrapHtmlProject(in folder: URL, sourceFileName: String) throws {
+        let manifest = """
+        {
+          "name": "\(folder.deletingPathExtension().lastPathComponent)",
+          "run": "python3 -m http.server {PORT}",
+          "actions": [
+            {
+              "name": "Serve Static Site",
+              "command": "python3 -m http.server {PORT}",
+              "isDefault": true,
+              "web": {
+                "port": 8000,
+                "openPath": "/\(sourceFileName)",
+                "openOnStart": true
+              }
+            }
+          ]
+        }
+        """
+        try manifest.write(to: folder.appendingPathComponent("airstrip.json"), atomically: true, encoding: .utf8)
+    }
+
+    private func bootstrapPythonProject(in folder: URL, sourceFileName: String) throws {
+        let manifest = """
+        {
+          "name": "\(folder.deletingPathExtension().lastPathComponent)",
+          "run": "python \(sourceFileName)"
+        }
+        """
+        try manifest.write(to: folder.appendingPathComponent("airstrip.json"), atomically: true, encoding: .utf8)
     }
 
     private func syncProjectsWithWorkspace() {
@@ -672,6 +1010,7 @@ final class ProjectStore: ObservableObject {
             appendLog("Port \(requestedPort) is busy. Using \(fallback) instead.\n", for: projectID)
         } else {
             appendLog("Port \(requestedPort) is already in use. Stop the other app or enable port fallback.\n", for: projectID)
+            recordPortConflictIssue(projectID: projectID, port: requestedPort, command: action?.command)
             return WebLaunch(canRun: false, port: nil, url: nil, openOnStart: false)
         }
 
@@ -727,6 +1066,10 @@ final class ProjectStore: ObservableObject {
     }
 
     private func killPort(_ port: Int) {
+        terminatePort(port)
+    }
+
+    private func terminatePort(_ port: Int) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
         process.arguments = ["-lc", "pids=$(lsof -ti tcp:\(port)); if [ -n \"$pids\" ]; then kill $pids; fi"]
@@ -734,6 +1077,26 @@ final class ProjectStore: ObservableObject {
     }
 
     private func inferredActions(from folder: URL) -> [ProjectAction] {
+        if fileManager.fileExists(atPath: folder.appendingPathComponent("package.json").path) {
+            let web = WebServerConfig(port: 5173, openPath: "/", openOnStart: true, allowPortFallback: true)
+            return [ProjectAction(
+                name: "Start Dev Server",
+                command: "if [ ! -d node_modules ]; then npm install; fi && npm run dev -- --port {PORT}",
+                isDefault: true,
+                web: web
+            )]
+        }
+
+        if fileManager.fileExists(atPath: folder.appendingPathComponent("index.html").path) {
+            let web = WebServerConfig(port: 8000, openPath: "/", openOnStart: true, allowPortFallback: true)
+            return [ProjectAction(
+                name: "Serve Static Site",
+                command: "python3 -m http.server {PORT}",
+                isDefault: true,
+                web: web
+            )]
+        }
+
         if let readmeActions = readmeActions(from: folder), !readmeActions.isEmpty {
             return readmeActions
         }
@@ -848,7 +1211,142 @@ final class ProjectStore: ObservableObject {
         if state.runs.count > Self.maxRunRecords {
             state.runs.removeFirst(state.runs.count - Self.maxRunRecords)
         }
+        state.detectedIssue = detectedIssue(from: state, newText: text) ?? state.detectedIssue
         runtimeStates[id] = state
+    }
+
+    private func detectedIssue(from state: ProjectRuntimeState, newText: String) -> RuntimeIssue? {
+        let lowercased = newText.lowercased()
+        let isAddressConflict = lowercased.contains("address already in use")
+            || lowercased.contains("eaddrinuse")
+            || lowercased.contains("errno 48")
+            || lowercased.contains("errno 98")
+        guard isAddressConflict else { return nil }
+
+        let port = state.activeWebPort ?? Self.firstPortMention(in: newText)
+        return RuntimeIssue(
+            kind: .addressAlreadyInUse,
+            summary: "The process tried to bind a TCP port that is already occupied.",
+            port: port,
+            suggestedPort: port.flatMap { firstAvailablePort(startingAt: $0 + 1, limit: 50) },
+            command: state.lastCommand,
+            excerpt: Self.failureExcerpt(from: state.runs.last?.output ?? newText)
+        )
+    }
+
+    private func recordPortConflictIssue(projectID: AirstripProject.ID, port: Int, command: String?) {
+        var state = runtimeStates[projectID] ?? ProjectRuntimeState()
+        state.detectedIssue = RuntimeIssue(
+            kind: .addressAlreadyInUse,
+            summary: "Airstrip found the requested web port is already occupied before launch.",
+            port: port,
+            suggestedPort: firstAvailablePort(startingAt: port + 1, limit: 50),
+            command: command,
+            excerpt: "Port \(port) is already in use. Stop the other app, enable port fallback, or update the project to read Airstrip's PORT value."
+        )
+        runtimeStates[projectID] = state
+    }
+
+    private static func firstPortMention(in text: String) -> Int? {
+        let patterns = [
+            #"port[ =:]+([0-9]{2,5})"#,
+            #"localhost:([0-9]{2,5})"#,
+            #"127\.0\.0\.1:([0-9]{2,5})"#,
+            #"0\.0\.0\.0:([0-9]{2,5})"#
+        ]
+
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { continue }
+            let range = NSRange(text.startIndex..<text.endIndex, in: text)
+            guard let match = regex.firstMatch(in: text, range: range), match.numberOfRanges > 1,
+                  let matchRange = Range(match.range(at: 1), in: text),
+                  let port = Int(text[matchRange]) else {
+                continue
+            }
+            return port
+        }
+        return nil
+    }
+
+    private static func failureExcerpt(from output: String) -> String {
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count > 4_000 else { return trimmed }
+        return "[older output trimmed]\n" + trimmed.suffix(4_000)
+    }
+
+    func refreshActivePorts() {
+        Task {
+            let ports = await fetchActivePortsFromSystem()
+            await MainActor.run {
+                self.activePorts = ports
+            }
+        }
+    }
+
+    private func fetchActivePortsFromSystem() async -> [ActivePortInfo] {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+        process.arguments = ["-i", "tcp", "-sTCP:LISTEN", "-P", "-F", "pcn"]
+        
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        
+        do {
+            try process.run()
+            let data = try pipe.fileHandleForReading.readToEnd() ?? Data()
+            process.waitUntilExit()
+            
+            guard let output = String(data: data, encoding: .utf8) else { return [] }
+            
+            var ports: [ActivePortInfo] = []
+            var currentPID: Int? = nil
+            var currentName: String? = nil
+            
+            let lines = output.components(separatedBy: .newlines)
+            for line in lines {
+                if line.hasPrefix("p") {
+                    currentPID = Int(line.dropFirst())
+                    currentName = nil
+                } else if line.hasPrefix("c") {
+                    currentName = String(line.dropFirst())
+                } else if line.hasPrefix("n") {
+                    let parts = line.dropFirst().components(separatedBy: ":")
+                    if let lastPart = parts.last, let port = Int(lastPart) {
+                        if port >= 80 {
+                            let airstripProject = self.projects.first { project in
+                                let state = self.runtimeStates[project.id]
+                                return state?.isRunning == true && state?.activeWebPort == port
+                            }
+                            
+                            let info = ActivePortInfo(
+                                port: port,
+                                pid: currentPID,
+                                processName: currentName,
+                                isAirstripProject: airstripProject != nil,
+                                airstripProjectName: airstripProject?.name
+                            )
+                            if !ports.contains(where: { $0.port == port }) {
+                                ports.append(info)
+                            }
+                        }
+                    }
+                }
+            }
+            return ports.sorted(by: { $0.port < $1.port })
+        } catch {
+            return []
+        }
+    }
+
+    func killProcess(pid: Int) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/kill")
+        process.arguments = ["-9", "\(pid)"]
+        try? process.run()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.refreshActivePorts()
+        }
     }
 
     private func appendSystemLog(_ text: String) {

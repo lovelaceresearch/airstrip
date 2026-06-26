@@ -50,14 +50,16 @@ struct OllamaChatView: View {
                 Button("Install Ollama") {
                     dependencyManager.installOllama()
                 }
-                .buttonStyle(.borderedProminent)
+                .airstripGlassButton(prominent: true)
                 .controlSize(.small)
+                .noFocusRing()
             case .stopped:
                 Button("Start Local Server") {
                     ollama.startServe()
                 }
-                .buttonStyle(.bordered)
+                .airstripGlassButton()
                 .controlSize(.small)
+                .noFocusRing()
             case .running:
                 Button("Stop") {
                     ollama.stopServer()
@@ -65,6 +67,7 @@ struct OllamaChatView: View {
                 .buttonStyle(.borderless)
                 .controlSize(.small)
                 .foregroundStyle(.secondary)
+                .noFocusRing()
                 .help("Stop the local Ollama server")
             case .starting, .unknown:
                 ProgressView()
@@ -94,6 +97,7 @@ struct OllamaChatView: View {
                 }
                 .buttonStyle(.borderless)
                 .controlSize(.small)
+                .noFocusRing()
             }
 
             Button {
@@ -166,7 +170,8 @@ struct OllamaChatView: View {
                 Button("Browse models on ollama.com") {
                     NSWorkspace.shared.open(URL(string: "https://ollama.com/library")!)
                 }
-                .buttonStyle(.bordered)
+                .airstripGlassButton()
+                .noFocusRing()
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -210,60 +215,64 @@ struct OllamaChatView: View {
     }
 
     private var splitColumns: some View {
-        HStack(spacing: 0) {
-            ForEach(ollama.selectedModels, id: \.self) { targetID in
-                VStack(spacing: 0) {
-                    HStack(spacing: 6) {
-                        Image(systemName: ollama.target(for: targetID)?.provider.iconName ?? "sparkles")
-                            .font(.system(size: 10))
-                            .foregroundStyle(.secondary)
-
-                        Text(ollama.displayName(for: targetID))
-                            .font(.system(size: 11.5, weight: .semibold))
-                            .lineLimit(1)
-
-                        Spacer()
-
-                        Button {
-                            ollama.removeModel(targetID)
-                        } label: {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 8, weight: .bold))
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 0) {
+                ForEach(ollama.selectedModels, id: \.self) { targetID in
+                    VStack(spacing: 0) {
+                        HStack(spacing: 6) {
+                            Image(systemName: ollama.target(for: targetID)?.provider.iconName ?? "sparkles")
+                                .font(.system(size: 10))
                                 .foregroundStyle(.secondary)
+
+                            Text(ollama.displayName(for: targetID))
+                                .font(.system(size: 11.5, weight: .semibold))
+                                .lineLimit(1)
+
+                            Spacer()
+
+                            Button {
+                                ollama.removeModel(targetID)
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 8, weight: .bold))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .noFocusRing()
+                            .accessibilityLabel("Remove \(ollama.displayName(for: targetID)) from comparison")
+                            .help("Remove this model from the conversation")
                         }
-                        .buttonStyle(.borderless)
-                        .help("Remove this model from the conversation")
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .background(.quaternary.opacity(0.4))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .background(.quaternary.opacity(0.4))
 
-                    Divider()
+                        Divider()
 
-                    ScrollViewReader { proxy in
-                        ScrollView {
-                            LazyVStack(alignment: .leading, spacing: 14) {
-                                ForEach(ollama.turns) { turn in
-                                    UserBubble(text: turn.prompt)
+                        ScrollViewReader { proxy in
+                            ScrollView {
+                                LazyVStack(alignment: .leading, spacing: 14) {
+                                    ForEach(ollama.turns) { turn in
+                                        UserBubble(text: turn.prompt)
 
-                                    if let response = turn.responses[targetID] {
-                                        ResponseBubble(response: response, showStats: ollama.settings.showStats)
+                                        if let response = turn.responses[targetID] {
+                                            ResponseBubble(response: response, showStats: ollama.settings.showStats)
+                                        }
                                     }
                                 }
-                            }
-                            .padding(12)
+                                .padding(12)
 
-                            Color.clear.frame(height: 1).id("chat-bottom-\(targetID)")
-                        }
-                        .onChange(of: ollama.turns) { _ in
-                            proxy.scrollTo("chat-bottom-\(targetID)", anchor: .bottom)
+                                Color.clear.frame(height: 1).id("chat-bottom-\(targetID)")
+                            }
+                            .onChange(of: ollama.turns) { _ in
+                                proxy.scrollTo("chat-bottom-\(targetID)", anchor: .bottom)
+                            }
                         }
                     }
-                }
-                .frame(maxWidth: .infinity)
+                    .frame(minWidth: 280, idealWidth: 340)
 
-                if targetID != ollama.selectedModels.last {
-                    Divider()
+                    if targetID != ollama.selectedModels.last {
+                        Divider()
+                    }
                 }
             }
         }
@@ -284,7 +293,7 @@ struct OllamaChatView: View {
                     .onSubmit(send)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
-                    .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+                    .airstripGlassPanel(cornerRadius: 10, interactive: true, fallbackOpacity: 0.35)
 
                 if ollama.isGenerating {
                     Button {
@@ -295,6 +304,7 @@ struct OllamaChatView: View {
                             .foregroundStyle(.red)
                     }
                     .buttonStyle(.plain)
+                    .noFocusRing()
                     .help("Stop generating")
                 } else {
                     Button(action: send) {
@@ -304,6 +314,7 @@ struct OllamaChatView: View {
                     }
                     .buttonStyle(.plain)
                     .disabled(!canSend)
+                    .noFocusRing()
                     .help("Send")
                 }
             }
@@ -323,100 +334,109 @@ struct OllamaChatView: View {
     }
 
     private var modelPickerRow: some View {
-        HStack(spacing: 6) {
-            // Primary model picker.
-            if let primary = ollama.selectedModels.first {
-                Menu {
-                    modelMenuItems { target in
-                        ollama.setPrimaryModel(target.id)
-                    } isChecked: { target in
-                        target.id == primary
+        HStack(spacing: 8) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    // Primary model picker.
+                    if let primary = ollama.selectedModels.first {
+                        Menu {
+                            modelMenuItems { target in
+                                ollama.setPrimaryModel(target.id)
+                            } isChecked: { target in
+                                target.id == primary
+                            }
+
+                            Divider()
+
+                            Button("Refresh model list") {
+                                Task { await ollama.refreshModels() }
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: ollama.target(for: primary)?.provider.iconName ?? "cpu")
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(ollama.target(for: primary)?.provider.brandColor ?? .secondary)
+
+                                Text(ollama.displayName(for: primary))
+                                    .font(.system(size: 11, weight: .medium))
+                                    .lineLimit(1)
+                            }
+                            .frame(maxWidth: 190, alignment: .leading)
+                        }
+                        .menuStyle(.borderlessButton)
+                        .noFocusRing()
+                    } else {
+                        Button {
+                            showSettings = true
+                        } label: {
+                            Label("Add Model", systemImage: "plus.circle")
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .buttonStyle(.borderless)
+                        .noFocusRing()
                     }
 
-                    Divider()
+                    // Additional models in this conversation.
+                    ForEach(ollama.selectedModels.dropFirst(), id: \.self) { targetID in
+                        let provider = ollama.target(for: targetID)?.provider
 
-                    Button("Refresh model list") {
-                        Task { await ollama.refreshModels() }
+                        HStack(spacing: 4) {
+                            Image(systemName: provider?.iconName ?? "cpu")
+                                .font(.system(size: 8))
+                                .foregroundStyle(provider?.brandColor ?? .secondary)
+
+                            Text(ollama.displayName(for: targetID))
+                                .font(.system(size: 11))
+                                .lineLimit(1)
+                                .frame(maxWidth: 150, alignment: .leading)
+
+                            Button {
+                                ollama.removeModel(targetID)
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 7, weight: .bold))
+                            }
+                            .buttonStyle(.plain)
+                            .noFocusRing()
+                            .accessibilityLabel("Remove \(ollama.displayName(for: targetID))")
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .airstripGlassCapsule(interactive: true)
                     }
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: ollama.target(for: primary)?.provider.iconName ?? "cpu")
-                            .font(.system(size: 9))
-                            .foregroundStyle(ollama.target(for: primary)?.provider.brandColor ?? .secondary)
 
-                        Text(ollama.displayName(for: primary))
-                            .font(.system(size: 11, weight: .medium))
-                            .lineLimit(1)
-                    }
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-            } else {
-                Button {
-                    showSettings = true
-                } label: {
-                    Label("Add Model", systemImage: "plus.circle")
-                        .font(.system(size: 11, weight: .medium))
-                }
-                .buttonStyle(.borderless)
-            }
-
-            // Additional models in this conversation.
-            ForEach(ollama.selectedModels.dropFirst(), id: \.self) { targetID in
-                let provider = ollama.target(for: targetID)?.provider
-
-                HStack(spacing: 4) {
-                    Image(systemName: provider?.iconName ?? "cpu")
-                        .font(.system(size: 8))
-                        .foregroundStyle(provider?.brandColor ?? .secondary)
-
-                    Text(ollama.displayName(for: targetID))
-                        .font(.system(size: 11))
-                        .lineLimit(1)
-
-                    Button {
-                        ollama.removeModel(targetID)
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 7, weight: .bold))
-                    }
-                    .buttonStyle(.plain)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(.quaternary.opacity(0.6), in: Capsule())
-            }
-
-            // Add another model: same prompt goes to all, screen splits.
-            if !availableToAdd.isEmpty {
-                Menu {
-                    ForEach(AIProvider.allCases) { provider in
-                        let targets = availableToAdd.filter { $0.provider == provider }
-                        if !targets.isEmpty {
-                            Section(provider == .ollama ? "Local (Ollama)" : provider.displayName) {
-                                ForEach(targets) { target in
-                                    Button(targetMenuTitle(target)) {
-                                        ollama.addModel(target.id)
+                    // Add another model: same prompt goes to all, screen splits.
+                    if !availableToAdd.isEmpty {
+                        Menu {
+                            ForEach(AIProvider.allCases) { provider in
+                                let targets = availableToAdd.filter { $0.provider == provider }
+                                if !targets.isEmpty {
+                                    Section(provider == .ollama ? "Local (Ollama)" : provider.displayName) {
+                                        ForEach(targets) { target in
+                                            Button(targetMenuTitle(target)) {
+                                                ollama.addModel(target.id)
+                                            }
+                                        }
                                     }
                                 }
                             }
+                        } label: {
+                            Image(systemName: "plus.circle")
+                                .font(.system(size: 12))
                         }
+                        .menuStyle(.borderlessButton)
+                        .noFocusRing()
+                        .help("Send the same prompt to another model side by side")
                     }
-                } label: {
-                    Image(systemName: "plus.circle")
-                        .font(.system(size: 12))
                 }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-                .help("Send the same prompt to another model side by side")
             }
-
-            Spacer()
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             if ollama.selectedModels.count > 1 {
                 Text("Split view: same prompt goes to \(ollama.selectedModels.count) models")
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
+                    .lineLimit(1)
             }
         }
     }
@@ -475,7 +495,7 @@ private struct UserBubble: View {
                 .textSelection(.enabled)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(Color.accentColor.opacity(0.85), in: RoundedRectangle(cornerRadius: 12))
+                .airstripGlassPanel(cornerRadius: 12, tint: .accentColor, fallbackOpacity: 0.75)
                 .foregroundStyle(.white)
         }
     }
@@ -516,7 +536,7 @@ private struct ResponseBubble: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
+            .airstripGlassPanel(cornerRadius: 12, fallbackOpacity: 0.35)
             .contextMenu {
                 Button("Copy Response") {
                     NSPasteboard.general.clearContents()
@@ -543,7 +563,7 @@ private struct ResponseBubble: View {
 
 /// Full settings sheet, sectioned like a native preferences window:
 /// Providers (API keys), Persona, and Generation.
-private struct AISettingsSheet: View {
+struct AISettingsSheet: View {
     @EnvironmentObject private var ollama: OllamaManager
     @Environment(\.dismiss) private var dismiss
 
@@ -575,6 +595,7 @@ private struct AISettingsSheet: View {
 
                 Button("Done") { dismiss() }
                     .keyboardShortcut(.defaultAction)
+                    .noFocusRing()
             }
             .padding(16)
 
@@ -604,7 +625,7 @@ private struct AISettingsSheet: View {
                 .padding(20)
             }
         }
-        .frame(width: 540, height: 580)
+        .frame(minWidth: 500, idealWidth: 540, maxWidth: 720, minHeight: 520, idealHeight: 580, maxHeight: 760)
     }
 
     // MARK: Providers
@@ -639,7 +660,7 @@ private struct AISettingsSheet: View {
             .scrollContentBackground(.hidden)
             .padding(8)
             .frame(height: 180)
-            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+            .airstripGlassPanel(cornerRadius: 8, fallbackOpacity: 0.35)
 
             Text("Examples")
                 .font(.system(size: 11, weight: .semibold))
@@ -657,9 +678,10 @@ private struct AISettingsSheet: View {
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 7))
+                        .airstripGlassPanel(cornerRadius: 7, interactive: true, fallbackOpacity: 0.3)
                 }
                 .buttonStyle(.plain)
+                .noFocusRing()
                 .help("Use this persona")
             }
         }
@@ -766,6 +788,7 @@ private struct AISettingsSheet: View {
                     .font(.system(size: 11))
             }
             .buttonStyle(.borderless)
+            .noFocusRing()
         }
     }
 
@@ -852,32 +875,20 @@ private struct ProviderSettingsRow: View {
                             .font(.system(size: 10.5))
                     }
                     .buttonStyle(.borderless)
+                    .noFocusRing()
                     .help("Open \(provider.displayName)'s API key page")
                 }
             }
 
             if config.isEnabled {
-                HStack(spacing: 8) {
-                    SecureField("API key", text: binding(\.apiKey))
-                        .textFieldStyle(.roundedBorder)
-
-                    TextField("Model ID", text: binding(\.model))
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 170)
-
-                    Menu {
-                        ForEach(provider.suggestedModels, id: \.self) { model in
-                            Button(model) {
-                                ollama.updateProvider(provider) { $0.model = model }
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.system(size: 9, weight: .semibold))
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) {
+                        providerFields
                     }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
-                    .help("Suggested models")
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        providerFields
+                    }
                 }
 
                 if !config.isUsable {
@@ -891,7 +902,32 @@ private struct ProviderSettingsRow: View {
             }
         }
         .padding(12)
-        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 9))
+        .airstripGlassPanel(cornerRadius: 10, fallbackOpacity: 0.35)
+    }
+
+    private var providerFields: some View {
+        Group {
+            SecureField("API key", text: binding(\.apiKey))
+                .textFieldStyle(.roundedBorder)
+
+            TextField("Model ID", text: binding(\.model))
+                .textFieldStyle(.roundedBorder)
+                .frame(minWidth: 140, idealWidth: 170, maxWidth: 220)
+
+            Menu {
+                ForEach(provider.suggestedModels, id: \.self) { model in
+                    Button(model) {
+                        ollama.updateProvider(provider) { $0.model = model }
+                    }
+                }
+            } label: {
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+            }
+            .menuStyle(.borderlessButton)
+            .noFocusRing()
+            .help("Suggested models")
+        }
     }
 
     private func binding<Value>(_ keyPath: WritableKeyPath<CloudProviderConfig, Value>) -> Binding<Value> {

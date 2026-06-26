@@ -7,52 +7,85 @@ struct LauncherGrid: View {
     @EnvironmentObject private var store: ProjectStore
     let openProject: (AirstripProject.ID) -> Void
     let openOllama: () -> Void
+    @Binding var searchText: String
+    @Binding var filter: ProjectLibraryFilter
 
     // Fixed column width and leading alignment: adaptive width ranges and
     // centered layout both make tiles slide around while the window resizes.
     // Left-anchored fixed columns only reflow at clean breakpoints, like
     // Finder's icon view.
     private let columns = [
-        GridItem(.adaptive(minimum: 132, maximum: 132), spacing: 18, alignment: .top)
+        GridItem(.adaptive(minimum: 140, maximum: 140), spacing: 18, alignment: .top)
     ]
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                DashboardHeader()
-
-                Text("Apps")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.secondary)
-
-                LazyVGrid(columns: columns, alignment: .leading, spacing: 22) {
-                    OllamaTile(open: openOllama)
-
-                    ForEach(store.projects) { project in
-                        ProjectTile(project: project) {
-                            openProject(project.id)
-                        }
-                        .onTapGesture(count: 2) {
-                            openProject(project.id)
-                            store.toggle(project)
-                        }
-                        .onTapGesture {
-                            openProject(project.id)
-                        }
-                        .contextMenu {
-                            tileMenu(for: project)
-                        }
-                    }
-                }
+            VStack(alignment: .leading, spacing: 18) {
+                LibraryHeader(
+                    projectCount: store.projects.count,
+                    visibleCount: filteredProjects.count,
+                    filter: filter
+                )
 
                 if store.projects.isEmpty {
                     ImportHintCard()
+                } else if filteredProjects.isEmpty {
+                    EmptyLibraryState(searchText: searchText, filter: filter)
+                } else {
+                    LazyVGrid(columns: columns, alignment: .leading, spacing: 22) {
+                        if showsAIStudio {
+                            OllamaTile(open: openOllama)
+                        }
+
+                        ForEach(filteredProjects) { project in
+                            ProjectTile(project: project) {
+                                openProject(project.id)
+                            }
+                            .onTapGesture(count: 2) {
+                                openProject(project.id)
+                                store.toggle(project)
+                            }
+                            .onTapGesture {
+                                openProject(project.id)
+                            }
+                            .contextMenu {
+                                tileMenu(for: project)
+                            }
+                        }
+                    }
                 }
             }
             .padding(.horizontal, 28)
             .padding(.vertical, 24)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    private var filteredProjects: [AirstripProject] {
+        store.projects.filter { project in
+            matchesSearch(project) && filter.includes(project, state: store.runtimeStates[project.id])
+        }
+    }
+
+    private var showsAIStudio: Bool {
+        filter == .all && (
+            searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+            "ai studio local ollama models".localizedCaseInsensitiveContains(searchText)
+        )
+    }
+
+    private func matchesSearch(_ project: AirstripProject) -> Bool {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return true }
+
+        let searchable = [
+            project.name,
+            project.path.lastPathComponent,
+            project.manifest.run ?? "",
+            (project.manifest.actions ?? []).map(\.name).joined(separator: " "),
+            (project.manifest.actions ?? []).map(\.command).joined(separator: " ")
+        ].joined(separator: " ")
+        return searchable.localizedCaseInsensitiveContains(query)
     }
 
     @ViewBuilder
@@ -102,6 +135,137 @@ struct LauncherGrid: View {
     }
 }
 
+enum ProjectLibraryFilter: String, CaseIterable, Identifiable {
+    case all = "All"
+    case running = "Running"
+    case attention = "Attention"
+    case web = "Web"
+
+    var id: String { rawValue }
+
+    var symbol: String {
+        switch self {
+        case .all: return "square.grid.2x2"
+        case .running: return "play.circle"
+        case .attention: return "exclamationmark.circle"
+        case .web: return "globe"
+        }
+    }
+
+    func includes(_ project: AirstripProject, state: ProjectRuntimeState?) -> Bool {
+        switch self {
+        case .all:
+            return true
+        case .running:
+            return state?.isRunning == true || state?.isPreparing == true
+        case .attention:
+            guard let state, !state.acknowledged else { return false }
+            if case .needsAttention = ProjectDisplayStatus(state) {
+                return true
+            }
+            return false
+        case .web:
+            return project.manifest.actions?.contains(where: { $0.web != nil }) == true
+        }
+    }
+}
+private struct LibraryHeader: View {
+    @EnvironmentObject private var store: ProjectStore
+    let projectCount: Int
+    let visibleCount: Int
+    let filter: ProjectLibraryFilter
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: 14) {
+                titleBlock
+                Spacer()
+            }
+
+            VStack(alignment: .leading, spacing: 12) {
+                titleBlock
+
+                Text(filter.rawValue)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.top, 4)
+    }
+
+    private var titleBlock: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("Library")
+                .font(.title2.weight(.semibold))
+
+            Text(summaryText)
+                .font(.system(size: 11.5))
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var summaryText: String {
+        if projectCount == 0 {
+            return "Drop in a folder to make it runnable."
+        }
+        if visibleCount == projectCount {
+            return projectCount == 1 ? "1 runnable folder" : "\(projectCount) runnable folders"
+        }
+        return "\(visibleCount) of \(projectCount) folders"
+    }
+}
+
+
+private struct EmptyLibraryState: View {
+    let searchText: String
+    let filter: ProjectLibraryFilter
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: filter.symbol)
+                .font(.system(size: 20, weight: .light))
+                .foregroundStyle(.secondary)
+                .frame(width: 38, height: 38)
+                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+
+                Text(detail)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .airstripGlassPanel(cornerRadius: 12, fallbackOpacity: 0.45)
+    }
+
+    private var title: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "No \(filter.rawValue.lowercased()) folders"
+            : "No matching folders"
+    }
+
+    private var detail: String {
+        if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Try a different name, command, or action."
+        }
+        switch filter {
+        case .all:
+            return "Import a folder to add it to the library."
+        case .running:
+            return "Run a project and it will appear here."
+        case .attention:
+            return "Failed or unchecked results will collect here."
+        case .web:
+            return "Folders with Streamlit, FastAPI, Flask, or another local UI will appear here."
+        }
+    }
+}
+
 // MARK: - Import hint
 
 /// Shown under the grid when no automations are imported yet; the dashboard
@@ -138,14 +302,11 @@ private struct ImportHintCard: View {
             } label: {
                 Label("Choose Folder...", systemImage: "folder.badge.plus")
             }
-            .buttonStyle(.borderedProminent)
+            .airstripGlassButton(prominent: true)
+            .noFocusRing()
         }
         .padding(16)
-        .background(Color(nsColor: .windowBackgroundColor).opacity(0.65), in: RoundedRectangle(cornerRadius: 12))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(.quaternary, lineWidth: 1)
-        }
+        .airstripGlassPanel(cornerRadius: 12, interactive: true, fallbackOpacity: 0.5)
     }
 }
 
@@ -205,13 +366,16 @@ private struct OllamaTile: View {
         }
         .frame(width: 124)
         .padding(.vertical, 12)
-        .padding(.horizontal, 4)
-        .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(isHovering ? Color.primary.opacity(0.045) : Color.clear)
-        )
+        .padding(.horizontal, 8)
+        .airstripGlassPanel(isPresented: isHovering, cornerRadius: 10, tint: .teal, interactive: true, fallbackOpacity: 0.35)
+        .contentShape(Rectangle())
         .onHover { isHovering = $0 }
         .onTapGesture(perform: open)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("AI Studio")
+        .accessibilityValue(captionText)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction(named: "Open", open)
     }
 
     private var captionText: String {
@@ -281,6 +445,7 @@ private struct ProjectTile: View {
                             .background(statusCaptionColor.opacity(0.14), in: Capsule())
                     }
                     .buttonStyle(.plain)
+                    .noFocusRing()
                     .help("Mark as checked")
                 } else {
                     captionLabel
@@ -290,12 +455,15 @@ private struct ProjectTile: View {
         }
         .frame(width: 124)
         .padding(.vertical, 12)
-        .padding(.horizontal, 4)
-        .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(isHovering ? Color.primary.opacity(0.045) : Color.clear)
-        )
+        .padding(.horizontal, 8)
+        .airstripGlassPanel(isPresented: isHovering, cornerRadius: 10, tint: ProjectTint.color(for: project.name), interactive: true, fallbackOpacity: 0.35)
+        .contentShape(Rectangle())
         .onHover { isHovering = $0 }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(project.name)
+        .accessibilityValue(status.label)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction(named: "Open", onActivate)
     }
 
     // Only live activity sits on the icon itself; results moved to the
@@ -336,9 +504,13 @@ private struct ProjectTile: View {
     }
 
     private var statusCaption: String {
+        if !state.missingTools.isEmpty {
+            return "Needs setup"
+        }
+
         switch status {
         case .idle:
-            return " "
+            return projectKindText
         case .preparing:
             return "Checking..."
         case .running:
@@ -354,7 +526,13 @@ private struct ProjectTile: View {
     }
 
     private var statusCaptionIcon: String? {
+        if !state.missingTools.isEmpty {
+            return "wrench.and.screwdriver"
+        }
+
         switch status {
+        case .idle:
+            return projectKindIcon
         case .finished:
             return state.acknowledged ? "checkmark.circle" : "checkmark.circle.fill"
         case .needsAttention:
@@ -366,6 +544,10 @@ private struct ProjectTile: View {
 
     private var statusCaptionColor: Color {
         // Acknowledged results fade to gray; unseen ones keep their color.
+        if !state.missingTools.isEmpty {
+            return .orange
+        }
+
         switch status {
         case .running:
             return .green
@@ -376,6 +558,34 @@ private struct ProjectTile: View {
         default:
             return .secondary
         }
+    }
+
+    private var projectKindText: String {
+        let actions = store.actions(for: project)
+        if actions.contains(where: { $0.web != nil }) {
+            return "Web app"
+        }
+        if let requirements = project.manifest.requirements, !requirements.isEmpty {
+            return actions.count > 1 ? "\(actions.count) actions" : "Python"
+        }
+        if project.manifest.ollama?.models.isEmpty == false {
+            return "Local AI"
+        }
+        return actions.count > 1 ? "\(actions.count) actions" : "Command"
+    }
+
+    private var projectKindIcon: String {
+        let actions = store.actions(for: project)
+        if actions.contains(where: { $0.web != nil }) {
+            return "globe"
+        }
+        if project.manifest.ollama?.models.isEmpty == false {
+            return "sparkles"
+        }
+        if let requirements = project.manifest.requirements, !requirements.isEmpty {
+            return "shippingbox"
+        }
+        return actions.count > 1 ? "square.stack.3d.up" : "terminal"
     }
 }
 
@@ -398,6 +608,7 @@ private struct RunStopOverlay: View {
             .frame(width: 42, height: 42)
         }
         .buttonStyle(.plain)
+        .noFocusRing()
         .disabled(isPreparing)
         .help(isRunning ? "Stop" : "Run")
     }

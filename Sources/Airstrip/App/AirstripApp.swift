@@ -7,6 +7,7 @@ struct AirstripApp: App {
     @StateObject private var store = ProjectStore()
     @StateObject private var dependencyManager = DependencyManager()
     @StateObject private var ollamaManager = OllamaManager()
+    @StateObject private var visualSettings = VisualSettings()
 
     var body: some Scene {
         WindowGroup {
@@ -14,10 +15,14 @@ struct AirstripApp: App {
                 .environmentObject(store)
                 .environmentObject(dependencyManager)
                 .environmentObject(ollamaManager)
-                .frame(minWidth: 920, minHeight: 620)
+                .environmentObject(visualSettings)
+                .environment(\.airstripVisualStyle, visualSettings.style)
+                .softenedByVisualSettings()
+                .frame(minWidth: 780, minHeight: 560)
                 .task {
                     store.load()
                     dependencyManager.refresh()
+                    ollamaManager.refreshServerStatus()
                 }
         }
         .windowStyle(.hiddenTitleBar)

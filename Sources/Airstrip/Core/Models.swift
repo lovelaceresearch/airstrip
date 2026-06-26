@@ -115,6 +115,7 @@ struct ProjectRuntimeState: Equatable {
     var missingTools: [ProjectTool] = []
     var startedAt: Date?
     var lastCommand: String?
+    var detectedIssue: RuntimeIssue?
     /// False after a run finishes until the user has looked at the result.
     var acknowledged = true
 
@@ -123,6 +124,28 @@ struct ProjectRuntimeState: Equatable {
             "▶ \(run.actionName)\n\(run.output)"
         }.joined(separator: "\n\n")
     }
+}
+
+enum RuntimeIssueKind: String, Equatable {
+    case addressAlreadyInUse
+
+    var title: String {
+        switch self {
+        case .addressAlreadyInUse:
+            return "Address already in use"
+        }
+    }
+}
+
+struct RuntimeIssue: Identifiable, Equatable {
+    var id = UUID()
+    var kind: RuntimeIssueKind
+    var summary: String
+    var port: Int?
+    var suggestedPort: Int?
+    var command: String?
+    var excerpt: String
+    var detectedAt = Date()
 }
 
 /// Top-level workspace tab, browser-style. The springboard is the pinned
@@ -221,4 +244,22 @@ enum DependencyStatus: Equatable {
             return "Missing"
         }
     }
+}
+
+struct ActivePortInfo: Identifiable, Hashable {
+    var id: Int { port }
+    let port: Int
+    let pid: Int?
+    let processName: String?
+    let isAirstripProject: Bool
+    let airstripProjectName: String?
+}
+
+struct AirstripDownload: Identifiable, Equatable {
+    let id: UUID
+    let filename: String
+    let targetURL: URL
+    let progress: Double // 0.0 to 1.0
+    let isCompleted: Bool
+    let errorDescription: String?
 }

@@ -2,31 +2,159 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-// MARK: - Dashboard header
+// MARK: - Status sidebar
 
-/// Overview cards above the app grid: runtime health, current activity,
-/// and a guide to what Airstrip can run (with a folder checker).
-struct DashboardHeader: View {
+struct ActivePortsCard: View {
     @EnvironmentObject private var store: ProjectStore
+    private let timer = Timer.publish(every: 4.0, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        DashboardCard(title: "Active Ports", systemImage: "network") {
+            VStack(alignment: .leading, spacing: 8) {
+                if store.activePorts.isEmpty {
+                    Text("No active TCP ports in use (>= 80).")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 4)
+                } else {
+                    VStack(spacing: 8) {
+                        ForEach(store.activePorts) { info in
+                            HStack(spacing: 8) {
+                                Circle()
+                                    .fill(info.isAirstripProject ? Color.green : Color.orange)
+                                    .frame(width: 6, height: 6)
+
+                                Text(":\(info.port)")
+                                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                    .frame(width: 48, alignment: .leading)
+
+                                VStack(alignment: .leading, spacing: 1) {
+                                    if let projName = info.airstripProjectName {
+                                        Text(projName)
+                                            .font(.system(size: 11.5, weight: .medium))
+                                            .lineLimit(1)
+                                        Text("Airstrip App")
+                                            .font(.system(size: 9.5))
+                                            .foregroundStyle(.secondary)
+                                    } else {
+                                        Text(info.processName ?? "Unknown")
+                                            .font(.system(size: 11.5, weight: .medium))
+                                            .lineLimit(1)
+                                        Text("PID \(info.pid ?? 0) • External")
+                                            .font(.system(size: 9.5))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+
+                                Spacer(minLength: 4)
+
+                                if info.isAirstripProject {
+                                    Button("Stop") {
+                                        if let project = store.projects.first(where: { $0.name == info.airstripProjectName }) {
+                                            store.stop(project)
+                                        }
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .controlSize(.mini)
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundStyle(.red)
+                                    .noFocusRing()
+                                } else if let pid = info.pid {
+                                    Button("Kill") {
+                                        store.killProcess(pid: pid)
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .controlSize(.mini)
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundStyle(.orange)
+                                    .noFocusRing()
+                                }
+                            }
+                            
+                            if info.port != store.activePorts.last?.port {
+                                Divider()
+                            }
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .onAppear {
+            store.refreshActivePorts()
+        }
+        .onReceive(timer) { _ in
+            store.refreshActivePorts()
+        }
+    }
+}
+
+struct RunningAppsCard: View {
+    @EnvironmentObject private var store: ProjectStore
+
+    var body: some View {
+        let running = store.projects.filter {
+            let state = store.runtimeStates[$0.id]
+            return state?.isRunning == true || state?.isPreparing == true
+        }
+
+        DashboardCard(title: "Running Apps", systemImage: "play.circle") {
+            VStack(alignment: .leading, spacing: 8) {
+                if running.isEmpty {
+                    Text("No apps running.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 4)
+                } else {
+                    VStack(spacing: 8) {
+                        ForEach(running) { project in
+                            let state = store.runtimeStates[project.id] ?? ProjectRuntimeState()
+                            HStack(spacing: 8) {
+                                Circle()
+                                    .fill(state.isPreparing ? Color.yellow : Color.green)
+                                    .frame(width: 6, height: 6)
+
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(project.name)
+                                        .font(.system(size: 11.5, weight: .semibold))
+                                        .lineLimit(1)
+
+                                    if let action = state.activeActionName {
+                                        Text(action)
+                                            .font(.system(size: 9.5))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+
+                                Spacer()
+
+                                Button("Stop") {
+                                    store.stop(project)
+                                }
+                                .buttonStyle(.borderless)
+                                .controlSize(.mini)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(.red)
+                                .noFocusRing()
+                            }
+
+                            if project.id != running.last?.id {
+                                Divider()
+                            }
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+struct RuntimeCard: View {
     @EnvironmentObject private var dependencyManager: DependencyManager
     @EnvironmentObject private var ollama: OllamaManager
 
-    @State private var showGuide = false
-
     var body: some View {
-        HStack(alignment: .top, spacing: 14) {
-            runtimeCard
-            activityCard
-            guideCard
-        }
-        .sheet(isPresented: $showGuide) {
-            CapabilityGuideSheet()
-        }
-    }
-
-    // MARK: Runtime card
-
-    private var runtimeCard: some View {
         DashboardCard(title: "Runtime", systemImage: "gearshape.2") {
             VStack(alignment: .leading, spacing: 8) {
                 runtimeLine("Python", status: dependencyManager.python, install: dependencyManager.installPython)
@@ -37,6 +165,9 @@ struct DashboardHeader: View {
 
                 OllamaServerSwitch()
             }
+        }
+        .onAppear {
+            ollama.refreshServerStatus()
         }
     }
 
@@ -66,6 +197,7 @@ struct DashboardHeader: View {
                     .buttonStyle(.borderless)
                     .controlSize(.mini)
                     .font(.system(size: 10.5, weight: .medium))
+                    .noFocusRing()
             }
         }
     }
@@ -78,7 +210,6 @@ struct DashboardHeader: View {
         }
     }
 
-    /// "Python 3.12.4" instead of the full version banner.
     private func shortVersion(_ version: String) -> String {
         let parts = version.components(separatedBy: " ")
         if parts.count >= 2 {
@@ -86,74 +217,12 @@ struct DashboardHeader: View {
         }
         return version
     }
+}
 
-    // MARK: Activity card
+struct HelpCard: View {
+    @Binding var showGuide: Bool
 
-    private var runningCount: Int {
-        store.projects.filter {
-            let state = store.runtimeStates[$0.id]
-            return state?.isRunning == true || state?.isPreparing == true
-        }.count
-    }
-
-    private var attentionCount: Int {
-        store.projects.filter {
-            let state = store.runtimeStates[$0.id]
-            guard let state, !state.acknowledged else { return false }
-            if case .needsAttention = ProjectDisplayStatus(state) {
-                return true
-            }
-            return false
-        }.count
-    }
-
-    private var activityCard: some View {
-        DashboardCard(title: "Activity", systemImage: "bolt") {
-            VStack(alignment: .leading, spacing: 8) {
-                activityLine(
-                    icon: "play.circle.fill",
-                    color: runningCount > 0 ? .green : .secondary,
-                    text: runningCount == 1 ? "1 app running" : "\(runningCount) apps running"
-                )
-
-                activityLine(
-                    icon: attentionCount > 0 ? "exclamationmark.circle.fill" : "checkmark.circle",
-                    color: attentionCount > 0 ? .orange : .secondary,
-                    text: attentionCount == 0
-                        ? "Nothing needs attention"
-                        : (attentionCount == 1 ? "1 result to check" : "\(attentionCount) results to check")
-                )
-
-                activityLine(
-                    icon: "square.grid.3x3",
-                    color: .secondary,
-                    text: store.projects.count == 1 ? "1 app installed" : "\(store.projects.count) apps installed"
-                )
-
-                if ollama.serverStatus.isRunning {
-                    activityLine(icon: "sparkles", color: .teal, text: "AI Studio ready")
-                }
-            }
-        }
-    }
-
-    private func activityLine(icon: String, color: Color, text: String) -> some View {
-        HStack(spacing: 7) {
-            Image(systemName: icon)
-                .font(.system(size: 11))
-                .foregroundStyle(color)
-                .frame(width: 14)
-
-            Text(text)
-                .font(.system(size: 11.5))
-
-            Spacer(minLength: 0)
-        }
-    }
-
-    // MARK: Guide card
-
-    private var guideCard: some View {
+    var body: some View {
         DashboardCard(title: "What Can I Run?", systemImage: "questionmark.circle") {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Python scripts, command-line tools, and local web apps — dropped in as folders, launched as icons.")
@@ -170,20 +239,243 @@ struct DashboardHeader: View {
                         Label("Guide", systemImage: "book")
                             .font(.system(size: 11, weight: .medium))
                     }
-                    .buttonStyle(.bordered)
+                    .airstripGlassButton()
                     .controlSize(.small)
+                    .noFocusRing()
 
                     Button {
                         showGuide = true
-                        // The sheet opens with the checker section visible.
                     } label: {
                         Label("Check a Folder", systemImage: "folder.badge.questionmark")
                             .font(.system(size: 11, weight: .medium))
                     }
-                    .buttonStyle(.bordered)
+                    .airstripGlassButton()
                     .controlSize(.small)
+                    .noFocusRing()
                 }
             }
+        }
+    }
+}
+
+
+
+struct StatusSidebar: View {
+    @Environment(\.airstripVisualStyle) private var visualStyle
+    @EnvironmentObject private var store: ProjectStore
+    @EnvironmentObject private var dependencyManager: DependencyManager
+    @EnvironmentObject private var ollama: OllamaManager
+
+    @State private var showGuide = false
+    @State private var showSettings = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(alignment: .top) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Status")
+                                .font(.title2.weight(.semibold))
+
+                            Text(summaryText)
+                                .font(.system(size: 11.5))
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Spacer()
+
+                        HStack(spacing: 4) {
+                            Button {
+                                store.refreshActivePorts()
+                                dependencyManager.refresh()
+                                ollama.refreshServerStatus()
+                            } label: {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 24, height: 24)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .help("Refresh status and ports")
+                            .noFocusRing()
+
+                            Button {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                    store.isSidebarOpen = false
+                                }
+                            } label: {
+                                Image(systemName: "sidebar.left")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 24, height: 24)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .help("Hide Sidebar")
+                            .noFocusRing()
+                        }
+                    }
+
+                    // top to bottom: running server/apps - runtime - help - allports
+                    RunningAppsCard()
+                    RuntimeCard()
+                    HelpCard(showGuide: $showGuide)
+                    ActivePortsCard()
+                    DownloadsCard()
+                }
+                .padding(18)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            Divider()
+                .opacity(0.5)
+
+            // Bottom fixed settings button
+            HStack {
+                Button {
+                    showSettings = true
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "gearshape.fill")
+                            .font(.system(size: 13))
+                        Text("Settings...")
+                            .font(.system(size: 12, weight: .medium))
+                        Spacer()
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity)
+                    .airstripGlassPanel(cornerRadius: 8, interactive: true, fallbackOpacity: 0.45)
+                }
+                .buttonStyle(.plain)
+                .noFocusRing()
+            }
+            .padding(12)
+        }
+        .background(.bar)
+        .overlay(alignment: .trailing) {
+            Rectangle()
+                .fill(.separator.opacity(visualStyle.separatorOpacity))
+                .frame(width: 1)
+        }
+        .sheet(isPresented: $showGuide) {
+            CapabilityGuideSheet()
+        }
+        .sheet(isPresented: $showSettings) {
+            AISettingsSheet()
+                .environmentObject(ollama)
+        }
+    }
+
+    private var summaryText: String {
+        let running = store.projects.filter {
+            let state = store.runtimeStates[$0.id]
+            return state?.isRunning == true || state?.isPreparing == true
+        }.count
+
+        if [dependencyManager.python, dependencyManager.homebrew, dependencyManager.ollama].contains(.unknown) {
+            return "Checking local tools..."
+        }
+        if running > 0 {
+            return running == 1 ? "1 folder is running." : "\(running) folders are running."
+        }
+        if ollama.serverStatus.isRunning {
+            return "Runtime ready. AI Studio is available."
+        }
+        return "Runtime, activity, and runability."
+    }
+}
+
+struct DownloadsCard: View {
+    @EnvironmentObject private var store: ProjectStore
+
+    var body: some View {
+        if !store.downloads.isEmpty {
+            DashboardCard(title: "Downloads", systemImage: "arrow.down.circle") {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(store.downloads) { download in
+                        downloadRow(download)
+                    }
+
+                    HStack {
+                        Spacer()
+                        Button("Clear List") {
+                            store.clearDownloads()
+                        }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .noFocusRing()
+                    }
+                    .padding(.top, 4)
+                }
+            }
+        }
+    }
+
+    private func downloadRow(_ download: AirstripDownload) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: fileIcon(for: download.filename))
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+
+                Text(download.filename)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                Spacer()
+
+                if download.isCompleted {
+                    Button {
+                        NSWorkspace.shared.activateFileViewerSelecting([download.targetURL])
+                    } label: {
+                        Image(systemName: "folder")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 16, height: 16)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Show in Finder")
+                    .noFocusRing()
+                } else if let error = download.errorDescription {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.red)
+                        .help(error)
+                } else {
+                    Text("\(Int(download.progress * 100))%")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if !download.isCompleted && download.errorDescription == nil {
+                ProgressView(value: download.progress)
+                    .progressViewStyle(.linear)
+                    .tint(.accentColor)
+                    .frame(height: 2)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func fileIcon(for filename: String) -> String {
+        let ext = URL(fileURLWithPath: filename).pathExtension.lowercased()
+        switch ext {
+        case "png", "jpg", "jpeg", "gif", "svg":
+            return "photo"
+        case "pdf":
+            return "doc.richtext"
+        case "zip", "tar", "gz", "rar":
+            return "doc.zipper"
+        case "json", "js", "ts", "html", "css", "py":
+            return "doc.text"
+        default:
+            return "doc"
         }
     }
 }
@@ -204,11 +496,7 @@ private struct DashboardCard<Content: View>: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, minHeight: 128, alignment: .topLeading)
-        .background(Color(nsColor: .windowBackgroundColor).opacity(0.65), in: RoundedRectangle(cornerRadius: 12))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(.quaternary, lineWidth: 1)
-        }
+        .airstripGlassPanel(cornerRadius: 12, fallbackOpacity: 0.5)
     }
 }
 
@@ -229,6 +517,7 @@ struct CapabilityGuideSheet: View {
 
                 Button("Done") { dismiss() }
                     .keyboardShortcut(.defaultAction)
+                    .noFocusRing()
             }
             .padding(16)
 
@@ -245,7 +534,7 @@ struct CapabilityGuideSheet: View {
                 .padding(20)
             }
         }
-        .frame(width: 560, height: 620)
+        .frame(minWidth: 500, idealWidth: 560, maxWidth: 720, minHeight: 540, idealHeight: 620, maxHeight: 760)
     }
 
     private var guideSection: some View {
@@ -354,7 +643,7 @@ private struct FolderCheckerSection: View {
                 } label: {
                     Label("Choose Folder...", systemImage: "folder.badge.questionmark")
                 }
-                .buttonStyle(.borderedProminent)
+                .airstripGlassButton(prominent: true)
                 .controlSize(.small)
                 .disabled(isChecking)
             }
@@ -402,13 +691,13 @@ private struct FolderCheckerSection: View {
                         } label: {
                             Label("Import \(folder.lastPathComponent)", systemImage: "plus.app")
                         }
-                        .buttonStyle(.bordered)
+                        .airstripGlassButton()
                         .controlSize(.small)
                         .padding(.top, 2)
                     }
                 }
                 .padding(12)
-                .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 10))
+                .airstripGlassPanel(cornerRadius: 10, tint: verdict == .pass ? .green : (verdict == .warn ? .orange : .red), fallbackOpacity: 0.35)
             }
         }
     }
