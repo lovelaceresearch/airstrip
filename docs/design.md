@@ -45,7 +45,7 @@ The Principal tab bar container [ContentView.swift](file:///Users/chanwoo/Docume
 
 The left status sidebar [Dashboard.swift](file:///Users/chanwoo/Documents/xcode/airstrip/Sources/Airstrip/Features/Dashboard/Dashboard.swift) uses a vertical split layout:
 - **Scrollable Area**: Displays active ports, running servers/apps, tools, and developer helper utilities (Activity log card was removed to declutter).
-- **Bottom-Fixed Panel**: Features a glass-styled settings gear button that is always pinned to the bottom. Clicking this button presents a sheet with API keys setup for Cloud AI models (Mistral, OpenAI, Gemini, Claude) to use in the AI Studio.
+- **Bottom-Fixed Panel**: Features a glass-styled settings gear button that is always pinned to the bottom. Clicking this button presents a sheet with API keys setup for Cloud AI models (Mistral, OpenAI, Gemini, Claude) to use in Airo.
 
 ---
 

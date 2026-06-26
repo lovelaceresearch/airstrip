@@ -382,7 +382,7 @@ struct StatusSidebar: View {
             return running == 1 ? "1 folder is running." : "\(running) folders are running."
         }
         if ollama.serverStatus.isRunning {
-            return "Runtime ready. AI Studio is available."
+            return "Runtime ready. Airo is available."
         }
         return "Runtime, activity, and runability."
     }
@@ -560,7 +560,7 @@ struct CapabilityGuideSheet: View {
             capabilityRow(
                 icon: "checkmark.circle.fill", color: .green,
                 title: "AI-powered automations",
-                detail: "Apps that use local Ollama models. Airstrip checks the models are downloaded before running. Cloud keys (OpenAI, Gemini, Claude, Mistral) work in AI Studio."
+                detail: "Apps that use local Ollama models. Airstrip checks the models are downloaded before running. Cloud keys (OpenAI, Gemini, Claude, Mistral) work in Airo."
             )
 
             capabilityRow(

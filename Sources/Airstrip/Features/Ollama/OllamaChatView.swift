@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Built-in AI Studio: local Ollama server management, external provider
+/// Airo: local Ollama server management, external provider
 /// keys, model switching, split-screen prompting, persona, and settings.
 struct OllamaChatView: View {
     @EnvironmentObject private var ollama: OllamaManager
@@ -158,7 +158,7 @@ struct OllamaChatView: View {
                 .font(.system(size: 40, weight: .light))
                 .foregroundStyle(LinearGradient(colors: [.purple, .pink], startPoint: .top, endPoint: .bottom))
 
-            Text("AI Studio")
+            Text("Airo")
                 .font(.title3.weight(.semibold))
 
             Text(emptyStateHint)

@@ -33,7 +33,7 @@ struct LauncherGrid: View {
                     EmptyLibraryState(searchText: searchText, filter: filter)
                 } else {
                     LazyVGrid(columns: columns, alignment: .leading, spacing: 22) {
-                        if showsAIStudio {
+                        if showsAiro {
                             OllamaTile(open: openOllama)
                         }
 
@@ -67,10 +67,10 @@ struct LauncherGrid: View {
         }
     }
 
-    private var showsAIStudio: Bool {
+    private var showsAiro: Bool {
         filter == .all && (
             searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-            "ai studio local ollama models".localizedCaseInsensitiveContains(searchText)
+            "airo ai studio local ollama models".localizedCaseInsensitiveContains(searchText)
         )
     }
 
@@ -310,10 +310,10 @@ private struct ImportHintCard: View {
     }
 }
 
-// MARK: - AI Studio tile
+// MARK: - Airo tile
 
 /// Built-in AI app: rendered like any other tile but opens the integrated
-/// AI Studio tab instead of running a project.
+/// Airo tab instead of running a project.
 private struct OllamaTile: View {
     @EnvironmentObject private var ollama: OllamaManager
     let open: () -> Void
@@ -354,7 +354,7 @@ private struct OllamaTile: View {
             .animation(.spring(response: 0.28, dampingFraction: 0.7), value: isHovering)
 
             VStack(spacing: 3) {
-                Text("AI Studio")
+                Text("Airo")
                     .font(.system(size: 13, weight: .medium))
 
                 Text(captionText)
@@ -372,7 +372,7 @@ private struct OllamaTile: View {
         .onHover { isHovering = $0 }
         .onTapGesture(perform: open)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("AI Studio")
+        .accessibilityLabel("Airo")
         .accessibilityValue(captionText)
         .accessibilityAddTraits(.isButton)
         .accessibilityAction(named: "Open", open)

@@ -191,7 +191,7 @@ struct ContentView: View {
             if let project = store.projects.first(where: { $0.id == id }) {
                 ProjectPage(project: project) {
                     openWeb(id)
-                } openAIStudio: {
+                } openAiro: {
                     openOllama()
                 }
             }
@@ -656,7 +656,7 @@ private struct OllamaTabChip: View {
                             LinearGradient(colors: [.blue, .teal], startPoint: .top, endPoint: .bottom)
                         )
 
-                    Text("AI Studio")
+                    Text("Airo")
                         .font(.system(size: 11, weight: isActive ? .semibold : .regular))
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -671,7 +671,7 @@ private struct OllamaTabChip: View {
             }
             .buttonStyle(.plain)
             .noFocusRing()
-            .accessibilityLabel("AI Studio")
+            .accessibilityLabel("Airo")
 
             closeButton
                 .opacity(isHovering || isActive ? 1 : 0.45)
@@ -693,7 +693,7 @@ private struct OllamaTabChip: View {
         }
         .buttonStyle(.plain)
         .noFocusRing()
-        .accessibilityLabel("Close AI Studio tab")
+        .accessibilityLabel("Close Airo tab")
         .help("Close tab")
     }
 }

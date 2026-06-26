@@ -79,7 +79,26 @@ final class ProjectStore: ObservableObject {
     private var projectsFolderSource: DispatchSourceFileSystemObject?
     private var projectsFolderDescriptor: CInt = -1
     private var pendingSyncTask: Task<Void, Never>?
+    private var terminationObserver: NSObjectProtocol?
     private let fileManager = FileManager.default
+
+    init() {
+        terminationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.stopAllAirstripServersForTermination()
+            }
+        }
+    }
+
+    deinit {
+        if let terminationObserver {
+            NotificationCenter.default.removeObserver(terminationObserver)
+        }
+    }
 
     /// Apps launched from Finder get a minimal PATH, so Homebrew tools
     /// (ollama, pdftoppm, ...) would be invisible without this.
@@ -395,20 +414,12 @@ final class ProjectStore: ObservableObject {
             killPort(port)
         }
 
-        // Process puts the child in its own process group, so signaling the
-        // negative pid stops the whole tree (zsh plus python etc), not just
-        // the shell. terminate() alone leaves grandchildren running.
-        let pid = process.processIdentifier
-        if pid > 0 {
-            kill(-pid, SIGTERM)
-        } else {
-            process.terminate()
-        }
+        terminateProcessTree(process, signal: SIGTERM)
 
         Task {
             try? await Task.sleep(for: .seconds(3))
-            if process.isRunning, pid > 0 {
-                kill(-pid, SIGKILL)
+            if process.isRunning {
+                terminateProcessTree(process, signal: SIGKILL)
             }
         }
 
@@ -428,6 +439,44 @@ final class ProjectStore: ObservableObject {
 
     func stopWebServer(_ server: RunningWebServer) {
         stop(server.project)
+    }
+
+    func stopAllAirstripServersForTermination() {
+        let ports = Set(runtimeStates.values.compactMap(\.activeWebPort))
+        for port in ports {
+            killPort(port)
+        }
+
+        for (_, process) in processes {
+            terminateProcessTree(process, signal: SIGTERM)
+        }
+
+        // App termination is immediate; give graceful shutdown a short moment,
+        // then make a best-effort pass so spawned servers do not linger.
+        usleep(250_000)
+        for (_, process) in processes where process.isRunning {
+            terminateProcessTree(process, signal: SIGKILL)
+        }
+
+        processes.removeAll()
+        for id in runtimeStates.keys {
+            var state = runtimeStates[id] ?? ProjectRuntimeState()
+            if state.isRunning {
+                state.isRunning = false
+                state.lastExitCode = SIGTERM
+                state.startedAt = nil
+                state.acknowledged = false
+                if let index = state.runs.lastIndex(where: { $0.isOpen }) {
+                    state.runs[index].exitCode = SIGTERM
+                    state.runs[index].endedAt = Date()
+                    if !state.runs[index].output.hasSuffix("\n") {
+                        state.runs[index].output += "\n"
+                    }
+                    state.runs[index].output += "Stopped because Airstrip quit.\n"
+                }
+            }
+            runtimeStates[id] = state
+        }
     }
 
     func retryWithSuggestedPort(_ project: AirstripProject, issue: RuntimeIssue) {
@@ -1074,6 +1123,20 @@ final class ProjectStore: ObservableObject {
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
         process.arguments = ["-lc", "pids=$(lsof -ti tcp:\(port)); if [ -n \"$pids\" ]; then kill $pids; fi"]
         try? process.run()
+    }
+
+    private func terminateProcessTree(_ process: Process, signal: Int32) {
+        let pid = process.processIdentifier
+        guard pid > 0 else {
+            process.terminate()
+            return
+        }
+
+        // Try the process group first so zsh-launched child servers are
+        // included, then fall back to the shell process itself.
+        if kill(-pid, signal) != 0 {
+            kill(pid, signal)
+        }
     }
 
     private func inferredActions(from folder: URL) -> [ProjectAction] {

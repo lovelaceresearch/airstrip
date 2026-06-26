@@ -19,6 +19,7 @@
 		A1000000000000000000000A /* OllamaService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001A /* OllamaService.swift */; };
 		A1000000000000000000000B /* OllamaChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001B /* OllamaChatView.swift */; };
 		A1000000000000000000000C /* Dashboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001C /* Dashboard.swift */; };
+		A10000000000000000000074 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000075 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -35,6 +36,7 @@
 		A1000000000000000000001A /* OllamaService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Ollama/OllamaService.swift; sourceTree = "<group>"; };
 		A1000000000000000000001B /* OllamaChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Ollama/OllamaChatView.swift; sourceTree = "<group>"; };
 		A1000000000000000000001C /* Dashboard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Dashboard/Dashboard.swift; sourceTree = "<group>"; };
+		A10000000000000000000075 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -96,6 +98,7 @@
 				A1000000000000000000001C /* Dashboard.swift */,
 				9AB033082FEE80E50025D1A6 /* LiquidGlassUI.swift */,
 				9AB0330A2FEE83440025D1A6 /* VisualSettings.swift */,
+				A10000000000000000000075 /* Assets.xcassets */,
 			);
 			path = Airstrip;
 			sourceTree = "<group>";
@@ -159,6 +162,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A10000000000000000000074 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

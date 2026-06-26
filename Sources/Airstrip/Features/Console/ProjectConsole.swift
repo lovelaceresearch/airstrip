@@ -11,7 +11,7 @@ struct ProjectPage: View {
     @EnvironmentObject private var dependencyManager: DependencyManager
     let project: AirstripProject
     let openWebTab: () -> Void
-    let openAIStudio: () -> Void
+    let openAiro: () -> Void
 
     private var state: ProjectRuntimeState {
         store.runtimeStates[project.id] ?? ProjectRuntimeState()
@@ -40,7 +40,7 @@ struct ProjectPage: View {
 
                     Divider()
 
-                    OutputConsole(project: project, state: state, openAIStudio: openAIStudio)
+                    OutputConsole(project: project, state: state, openAiro: openAiro)
                         .padding(16)
                 }
 
@@ -50,7 +50,7 @@ struct ProjectPage: View {
 
                     Divider()
 
-                    OutputConsole(project: project, state: state, openAIStudio: openAIStudio)
+                    OutputConsole(project: project, state: state, openAiro: openAiro)
                         .padding(16)
                 }
             }
@@ -320,7 +320,7 @@ private struct OutputConsole: View {
     @EnvironmentObject private var ollama: OllamaManager
     let project: AirstripProject
     let state: ProjectRuntimeState
-    let openAIStudio: () -> Void
+    let openAiro: () -> Void
 
     /// User-toggled expansion overrides; by default only the latest run is open.
     @State private var expansionOverrides: [UUID: Bool] = [:]
@@ -377,7 +377,7 @@ private struct OutputConsole: View {
                     ErrorFixSelectorSheet(
                         project: project,
                         issue: issue,
-                        openAIStudio: openAIStudio,
+                        openAiro: openAiro,
                         dismiss: { showErrorFixSelector = false }
                     )
                     .frame(width: 460)
@@ -431,7 +431,7 @@ private struct ErrorFixSelectorSheet: View {
     @EnvironmentObject private var ollama: OllamaManager
     let project: AirstripProject
     let issue: RuntimeIssue
-    let openAIStudio: () -> Void
+    let openAiro: () -> Void
     let dismiss: () -> Void
     @State private var showAIOptions = false
 
@@ -644,7 +644,7 @@ private struct ErrorFixSelectorSheet: View {
         ollama.selectedModels = [target.id]
         ollama.send(prompt)
         dismiss()
-        openAIStudio()
+        openAiro()
     }
 }
 

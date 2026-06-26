@@ -22,9 +22,9 @@ Airstrip features a collapsible status sidebar on the left side of the window, t
 
 Projects added or removed in Finder are picked up automatically whenever Airstrip becomes the active app.
 
-## Built-in AI Studio
+## Built-in Airo
 
-The springboard includes an integrated "AI Studio" chat app that opens in its own tab like any other project:
+The springboard includes an integrated "Airo" chat app that opens in its own tab like any other project:
 
 - If Ollama is installed but not running, Airstrip starts `ollama serve` itself (and stops it again on quit if it started it).
 - Cloud models work too: add API keys for OpenAI, Gemini, Claude, or Mistral in the settings sheet. Keys live in the macOS Keychain.
@@ -127,7 +127,7 @@ Stopping a project kills the entire process tree, including child processes the 
 - Dependency detection for Python, Homebrew, and Ollama
 - Homebrew install via visible Terminal script
 - Ollama install via Homebrew when available, otherwise the official macOS download page
-- AI Studio for local Ollama chat plus optional OpenAI, Gemini, Claude, and Mistral API keys
+- Airo for local Ollama chat plus optional OpenAI, Gemini, Claude, and Mistral API keys
 
 ## What Airstrip Can Run
 
@@ -142,9 +142,9 @@ It is not intended to run Windows/Linux-only binaries, repos with no runnable co
 
 The Runtime popover includes a runability checker that summarizes imported projects and highlights obvious missing pieces such as Python, Ollama, or declared command-line tools.
 
-## AI Studio
+## Airo
 
-The built-in AI Studio can talk to local Ollama models and external providers. Add OpenAI, Gemini, Claude, or Mistral keys from AI Studio settings. API keys are stored in the macOS Keychain; model IDs stay editable because provider model names change over time.
+The built-in Airo app can talk to local Ollama models and external providers. Add OpenAI, Gemini, Claude, or Mistral keys from Airo settings. API keys are stored in the macOS Keychain; model IDs stay editable because provider model names change over time.
 
 ## Install On Another Mac
 
@@ -167,6 +167,23 @@ The `Package.swift` target is kept as a lightweight command-line build path, but
 ```sh
 swift run
 ```
+
+## Package the App
+
+To build a Release `.app` bundle for sharing, run the packaging script from the repo root:
+
+```sh
+Scripts/package-app.sh
+```
+
+The script uses `xcodebuild` to produce a Release build, then writes:
+
+```text
+dist/Airstrip.zip
+dist/Airstrip.dmg
+```
+
+Send the DMG for the easiest install flow on another Mac. The build is ad-hoc signed (not notarized), so the first launch requires right-click → Open. See [docs/PACKAGING.md](docs/PACKAGING.md) for details.
 
 ## Documentation
 
