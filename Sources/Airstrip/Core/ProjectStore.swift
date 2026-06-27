@@ -13,6 +13,7 @@ final class ProjectStore: ObservableObject {
     /// Set when a freshly started web server is ready to be shown; the UI
     /// observes this to open the project's embedded web tab.
     @Published var pendingWebFocus: AirstripProject.ID?
+    @Published var pendingImportPanelRequest: UUID?
     @Published var activePorts: [ActivePortInfo] = []
     @Published var isSidebarOpen = false
     @Published var downloads: [AirstripDownload] = []
@@ -175,6 +176,10 @@ final class ProjectStore: ObservableObject {
 
         guard panel.runModal() == .OK else { return }
         panel.urls.forEach { importProject(from: $0) }
+    }
+
+    func requestCheckedImportPanel() {
+        pendingImportPanelRequest = UUID()
     }
 
     func importFromDrop(providers: [NSItemProvider]) -> Bool {
@@ -951,6 +956,7 @@ final class ProjectStore: ObservableObject {
         let runFile = names.first { fileManager.fileExists(atPath: folder.appendingPathComponent($0).path) }
         let requirements = fileManager.fileExists(atPath: folder.appendingPathComponent("requirements.txt").path) ? "requirements.txt" : nil
         let actions = inferredActions(from: folder)
+        let tools = inferredTools(from: folder, actions: actions)
 
         return ProjectManifest(
             name: folder.deletingPathExtension().lastPathComponent,
@@ -958,6 +964,7 @@ final class ProjectStore: ObservableObject {
             run: actions.first?.command ?? runFile.map { "python \($0)" },
             actions: actions.isEmpty ? nil : actions,
             requirements: requirements,
+            tools: tools.isEmpty ? nil : tools,
             ollama: nil
         )
     }
@@ -1141,13 +1148,7 @@ final class ProjectStore: ObservableObject {
 
     private func inferredActions(from folder: URL) -> [ProjectAction] {
         if fileManager.fileExists(atPath: folder.appendingPathComponent("package.json").path) {
-            let web = WebServerConfig(port: 5173, openPath: "/", openOnStart: true, allowPortFallback: true)
-            return [ProjectAction(
-                name: "Start Dev Server",
-                command: "if [ ! -d node_modules ]; then npm install; fi && npm run dev -- --port {PORT}",
-                isDefault: true,
-                web: web
-            )]
+            return inferredNodeActions(from: folder)
         }
 
         if fileManager.fileExists(atPath: folder.appendingPathComponent("index.html").path) {
@@ -1169,6 +1170,82 @@ final class ProjectStore: ObservableObject {
         }
 
         return []
+    }
+
+    private func inferredNodeActions(from folder: URL) -> [ProjectAction] {
+        guard let package = nodePackageManifest(in: folder),
+              let scripts = package.scripts,
+              !scripts.isEmpty else {
+            return []
+        }
+
+        let installPrefix = "if [ ! -d node_modules ]; then npm install; fi"
+
+        if let dev = scripts["dev"] {
+            let lowercased = dev.lowercased()
+            if lowercased.contains("next") {
+                return [ProjectAction(
+                    name: "Start Next.js",
+                    command: "\(installPrefix) && npm run dev -- -p {PORT}",
+                    isDefault: true,
+                    web: WebServerConfig(port: 3000, openPath: "/", openOnStart: true, allowPortFallback: true)
+                )]
+            }
+
+            if lowercased.contains("vite") || package.hasDependency(named: "vite") {
+                return [ProjectAction(
+                    name: "Start Vite",
+                    command: "\(installPrefix) && npm run dev -- --host 127.0.0.1 --port {PORT}",
+                    isDefault: true,
+                    web: WebServerConfig(port: 5173, openPath: "/", openOnStart: true, allowPortFallback: true)
+                )]
+            }
+
+            return [ProjectAction(
+                name: "Start Dev Server",
+                command: "\(installPrefix) && PORT={PORT} npm run dev",
+                isDefault: true,
+                web: WebServerConfig(port: 3000, openPath: "/", openOnStart: true, allowPortFallback: true)
+            )]
+        }
+
+        if scripts["preview"] != nil {
+            return [ProjectAction(
+                name: "Preview Build",
+                command: "\(installPrefix) && npm run preview -- --host 127.0.0.1 --port {PORT}",
+                isDefault: true,
+                web: WebServerConfig(port: 4173, openPath: "/", openOnStart: true, allowPortFallback: true)
+            )]
+        }
+
+        if scripts["start"] != nil {
+            return [ProjectAction(
+                name: "Start Web App",
+                command: "\(installPrefix) && PORT={PORT} npm start",
+                isDefault: true,
+                web: WebServerConfig(port: 3000, openPath: "/", openOnStart: true, allowPortFallback: true)
+            )]
+        }
+
+        return []
+    }
+
+    private func inferredTools(from folder: URL, actions: [ProjectAction]) -> [ProjectTool] {
+        var tools: [ProjectTool] = []
+        if fileManager.fileExists(atPath: folder.appendingPathComponent("package.json").path)
+            || actions.contains(where: { action in
+                ["npm ", "npx ", "node "].contains { action.command.contains($0) || action.command.hasPrefix($0) }
+            }) {
+            tools.append(ProjectTool(command: "npm", brew: "node"))
+        }
+
+        return tools
+    }
+
+    private func nodePackageManifest(in folder: URL) -> NodePackageManifest? {
+        let url = folder.appendingPathComponent("package.json")
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(NodePackageManifest.self, from: data)
     }
 
     private func readmeActions(from folder: URL) -> [ProjectAction]? {
@@ -1423,6 +1500,16 @@ private struct WebLaunch {
     var port: Int?
     var url: URL?
     var openOnStart: Bool
+}
+
+private struct NodePackageManifest: Decodable {
+    var scripts: [String: String]?
+    var dependencies: [String: String]?
+    var devDependencies: [String: String]?
+
+    func hasDependency(named name: String) -> Bool {
+        dependencies?[name] != nil || devDependencies?[name] != nil
+    }
 }
 
 private extension JSONEncoder {

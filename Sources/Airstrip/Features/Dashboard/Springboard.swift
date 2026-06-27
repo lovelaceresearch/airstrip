@@ -271,8 +271,6 @@ private struct EmptyLibraryState: View {
 /// Shown under the grid when no automations are imported yet; the dashboard
 /// stays visible above it.
 private struct ImportHintCard: View {
-    @EnvironmentObject private var store: ProjectStore
-
     var body: some View {
         HStack(spacing: 16) {
             ZStack {
@@ -287,23 +285,15 @@ private struct ImportHintCard: View {
             }
 
             VStack(alignment: .leading, spacing: 3) {
-                Text("Drop an automation folder anywhere in this window")
+                Text("Drop a project folder or file anywhere in this window")
                     .font(.system(size: 13, weight: .semibold))
 
-                Text("It becomes an app icon you can run with one click.")
+                Text("Airstrip checks it first, then adds it or gives you a copyable fix guide.")
                     .font(.system(size: 11.5))
                     .foregroundStyle(.secondary)
             }
 
             Spacer()
-
-            Button {
-                store.importWithPanel()
-            } label: {
-                Label("Choose Folder...", systemImage: "folder.badge.plus")
-            }
-            .airstripGlassButton(prominent: true)
-            .noFocusRing()
         }
         .padding(16)
         .airstripGlassPanel(cornerRadius: 12, interactive: true, fallbackOpacity: 0.5)

@@ -11,6 +11,12 @@ struct ContentView: View {
     @State private var searchText = ""
     @State private var libraryFilter: ProjectLibraryFilter = .all
     @State private var isSearchExpanded = false
+    @State private var showOnboarding = false
+    @State private var isRunningDropCheck = false
+    @State private var dropCheckResults: [AirstripRunCheck] = []
+    @State private var pendingDropURLs: [URL] = []
+    @State private var dropCheckTask: Task<Void, Never>?
+    @AppStorage("hasSeenAirstripOnboarding") private var hasSeenOnboarding = false
 
     private var allTabs: [WorkspaceTab] {
         [.springboard] + openTabs
@@ -52,6 +58,11 @@ struct ContentView: View {
             store.pendingWebFocus = nil
             openWeb(id)
         }
+        .onChange(of: store.pendingImportPanelRequest) { request in
+            guard request != nil else { return }
+            store.pendingImportPanelRequest = nil
+            openImportPanelForRunCheck()
+        }
         // Folders added or removed in Finder show up whenever the user comes
         // back to Airstrip; no manual refresh button needed.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
@@ -63,7 +74,7 @@ struct ContentView: View {
             }
         }
         .onDrop(of: [.folder, .fileURL], isTargeted: $isDropTargeted) { providers in
-            store.importFromDrop(providers: providers)
+            runCheckForDroppedItems(providers)
         }
         .alert(
             "Airstrip",
@@ -78,6 +89,26 @@ struct ContentView: View {
                 Text(store.lastError ?? "")
             }
         )
+        .sheet(isPresented: $showOnboarding) {
+            FirstRunOnboardingSheet(hasSeenOnboarding: $hasSeenOnboarding)
+        }
+        .sheet(isPresented: Binding(
+            get: { isRunningDropCheck || !dropCheckResults.isEmpty },
+            set: { visible in
+                if !visible {
+                    isRunningDropCheck = false
+                    dropCheckResults = []
+                }
+            }
+        )) {
+            ImportRunCheckerSheet(isChecking: isRunningDropCheck, checks: dropCheckResults)
+                .environmentObject(store)
+        }
+        .onAppear {
+            if !hasSeenOnboarding {
+                showOnboarding = true
+            }
+        }
     }
 
     private var appShell: some View {
@@ -152,7 +183,7 @@ struct ContentView: View {
                     ToolbarItem(id: "library-actions") {
                         ToolbarActionCluster(
                             openProjectsFolder: store.revealAirstripFolder,
-                            importProject: store.importWithPanel
+                            importProject: openImportPanelForRunCheck
                         )
                     }
                     .sharedBackgroundVisibility(.hidden)
@@ -164,7 +195,7 @@ struct ContentView: View {
                     ToolbarItem(id: "library-actions") {
                         ToolbarActionCluster(
                             openProjectsFolder: store.revealAirstripFolder,
-                            importProject: store.importWithPanel
+                            importProject: openImportPanelForRunCheck
                         )
                     }
                 }
@@ -264,6 +295,88 @@ struct ContentView: View {
                 activeTab = openTabs.last ?? .springboard
             }
         }
+    }
+
+    private func runCheckForDroppedItems(_ providers: [NSItemProvider]) -> Bool {
+        var accepted = false
+        for provider in providers where provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+            accepted = true
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                guard let url = droppedURL(from: item) else { return }
+                Task { @MainActor in
+                    queueDroppedURLForRunCheck(url)
+                }
+            }
+        }
+        return accepted
+    }
+
+    private func queueDroppedURLForRunCheck(_ url: URL) {
+        if !pendingDropURLs.contains(where: { $0.standardizedFileURL.path == url.standardizedFileURL.path }) {
+            pendingDropURLs.append(url)
+        }
+
+        dropCheckTask?.cancel()
+        dropCheckTask = Task {
+            try? await Task.sleep(for: .milliseconds(180))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                startDropRunCheck()
+            }
+        }
+    }
+
+    private func startDropRunCheck() {
+        let urls = pendingDropURLs
+        pendingDropURLs = []
+        guard !urls.isEmpty else { return }
+
+        isRunningDropCheck = true
+        dropCheckResults = []
+
+        let python = dependencyManager.python
+        let node = dependencyManager.node
+        let ollama = dependencyManager.ollama
+        Task {
+            var checks: [AirstripRunCheck] = []
+            for url in urls {
+                let check = await FolderCheck.analyze(url: url, python: python, node: node, ollama: ollama)
+                checks.append(check)
+            }
+            await MainActor.run {
+                dropCheckResults = checks
+                isRunningDropCheck = false
+            }
+        }
+    }
+
+    private func openImportPanelForRunCheck() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = true
+        panel.prompt = "Check"
+        panel.message = "Airstrip will check each item before adding it."
+
+        guard panel.runModal() == .OK else { return }
+        pendingDropURLs.append(contentsOf: panel.urls)
+        startDropRunCheck()
+    }
+
+    private func droppedURL(from item: Any?) -> URL? {
+        if let url = item as? URL {
+            return url
+        }
+        if let url = item as? NSURL {
+            return url as URL
+        }
+        if let data = item as? Data {
+            return URL(dataRepresentation: data, relativeTo: nil)
+        }
+        if let string = item as? String {
+            return URL(string: string) ?? URL(fileURLWithPath: string)
+        }
+        return nil
     }
 }
 
@@ -948,12 +1061,12 @@ private struct RuntimeHealthButton: View {
     @State private var isHovering = false
 
     private var anyMissing: Bool {
-        [dependencyManager.python, dependencyManager.homebrew, dependencyManager.ollama]
+        [dependencyManager.python, dependencyManager.node, dependencyManager.homebrew, dependencyManager.ollama]
             .contains(.missing)
     }
 
     private var anyChecking: Bool {
-        [dependencyManager.python, dependencyManager.homebrew, dependencyManager.ollama]
+        [dependencyManager.python, dependencyManager.node, dependencyManager.homebrew, dependencyManager.ollama]
             .contains(.unknown)
     }
 
@@ -969,7 +1082,7 @@ private struct RuntimeHealthButton: View {
                 .frame(width: 28, height: 28)
                 .contentShape(Circle())
         }
-        .help("Python, Homebrew, and Ollama status")
+        .help("Python, Node/npm, Homebrew, and Ollama status")
         .buttonStyle(.plain)
         .background {
             if isHovering || store.isSidebarOpen {
@@ -1025,6 +1138,13 @@ private struct RuntimeHealthPopover: View {
                 detail: "Runs automation scripts",
                 status: dependencyManager.python,
                 install: dependencyManager.installPython
+            )
+
+            RuntimeRow(
+                name: "Node/npm",
+                detail: "Runs web app projects",
+                status: dependencyManager.node,
+                install: dependencyManager.installNode
             )
 
             RuntimeRow(

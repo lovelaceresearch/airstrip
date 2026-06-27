@@ -9,6 +9,7 @@ struct OllamaChatView: View {
 
     @State private var draft = ""
     @State private var showSettings = false
+    @State private var confirmingOllamaDownload = false
     @FocusState private var inputFocused: Bool
 
     var body: some View {
@@ -48,7 +49,7 @@ struct OllamaChatView: View {
             switch ollama.serverStatus {
             case .notInstalled:
                 Button("Install Ollama") {
-                    dependencyManager.installOllama()
+                    confirmingOllamaDownload = true
                 }
                 .airstripGlassButton(prominent: true)
                 .controlSize(.small)
@@ -110,6 +111,14 @@ struct OllamaChatView: View {
             .help("API keys, persona, and generation settings")
             .sheet(isPresented: $showSettings) {
                 AISettingsSheet()
+            }
+            .alert("Download Ollama?", isPresented: $confirmingOllamaDownload) {
+                Button("Download") {
+                    dependencyManager.installOllama()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Airstrip will download the official macOS DMG from ollama.com into your Downloads folder. Open the DMG to finish installing Ollama.")
             }
         }
     }

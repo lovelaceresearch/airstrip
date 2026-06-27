@@ -29,7 +29,7 @@ struct AirstripApp: App {
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("Import Project...") {
-                    store.importWithPanel()
+                    store.requestCheckedImportPanel()
                 }
                 .keyboardShortcut("o", modifiers: [.command])
             }

@@ -4,20 +4,27 @@ import Foundation
 @MainActor
 final class DependencyManager: ObservableObject {
     @Published var python: DependencyStatus = .unknown
+    @Published var node: DependencyStatus = .unknown
     @Published var homebrew: DependencyStatus = .unknown
     @Published var ollama: DependencyStatus = .unknown
+    @Published var isDownloadingOllama = false
+    @Published var ollamaDownloadTargetURL: URL?
+    @Published var ollamaDownloadError: String?
 
     func refresh() {
         python = .unknown
+        node = .unknown
         homebrew = .unknown
         ollama = .unknown
 
         Task {
             async let pythonResult = Self.version(command: "python3 --version")
+            async let nodeResult = Self.version(command: "node --version && npm --version")
             async let brewResult = Self.version(command: "brew --version | head -n 1")
             async let ollamaResult = Self.version(command: "ollama --version")
 
             python = await pythonResult
+            node = await nodeResult
             homebrew = await brewResult
             ollama = await ollamaResult
         }
@@ -30,10 +37,34 @@ final class DependencyManager: ObservableObject {
     }
 
     func installOllama() {
-        if case .available = homebrew {
-            runVisibleTerminalCommand("brew install --cask ollama")
-        } else {
-            NSWorkspace.shared.open(URL(string: "https://ollama.com/download/mac")!)
+        guard !isDownloadingOllama else { return }
+
+        isDownloadingOllama = true
+        ollamaDownloadTargetURL = nil
+        ollamaDownloadError = nil
+
+        Task {
+            do {
+                let source = URL(string: "https://ollama.com/download/Ollama.dmg")!
+                let (temporaryURL, response) = try await URLSession.shared.download(from: source)
+                if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                    throw URLError(.badServerResponse)
+                }
+
+                let downloadsURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
+                let targetURL = uniqueFileURL(in: downloadsURL, filename: "Ollama.dmg")
+                try? FileManager.default.removeItem(at: targetURL)
+                try FileManager.default.moveItem(at: temporaryURL, to: targetURL)
+
+                isDownloadingOllama = false
+                ollamaDownloadTargetURL = targetURL
+                NSWorkspace.shared.activateFileViewerSelecting([targetURL])
+                refresh()
+            } catch {
+                isDownloadingOllama = false
+                ollamaDownloadError = "Ollama download failed: \(error.localizedDescription)"
+                NSWorkspace.shared.open(URL(string: "https://ollama.com/download/mac")!)
+            }
         }
     }
 
@@ -42,6 +73,14 @@ final class DependencyManager: ObservableObject {
             runVisibleTerminalCommand("brew install python")
         } else {
             NSWorkspace.shared.open(URL(string: "https://www.python.org/downloads/macos/")!)
+        }
+    }
+
+    func installNode() {
+        if case .available = homebrew {
+            runVisibleTerminalCommand("brew install node")
+        } else {
+            NSWorkspace.shared.open(URL(string: "https://nodejs.org/en/download")!)
         }
     }
 
@@ -124,5 +163,20 @@ final class DependencyManager: ObservableObject {
                 return .missing
             }
         }.value
+    }
+
+    private func uniqueFileURL(in folder: URL, filename: String) -> URL {
+        let base = URL(fileURLWithPath: filename).deletingPathExtension().lastPathComponent
+        let ext = URL(fileURLWithPath: filename).pathExtension
+        var candidate = folder.appendingPathComponent(filename)
+        var index = 2
+
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            let numbered = ext.isEmpty ? "\(base)-\(index)" : "\(base)-\(index).\(ext)"
+            candidate = folder.appendingPathComponent(numbered)
+            index += 1
+        }
+
+        return candidate
     }
 }

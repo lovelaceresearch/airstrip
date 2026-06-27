@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -153,13 +154,41 @@ struct RunningAppsCard: View {
 struct RuntimeCard: View {
     @EnvironmentObject private var dependencyManager: DependencyManager
     @EnvironmentObject private var ollama: OllamaManager
+    @State private var confirmingOllamaDownload = false
 
     var body: some View {
         DashboardCard(title: "Runtime", systemImage: "gearshape.2") {
             VStack(alignment: .leading, spacing: 8) {
                 runtimeLine("Python", status: dependencyManager.python, install: dependencyManager.installPython)
+                runtimeLine("Node/npm", status: dependencyManager.node, install: dependencyManager.installNode)
                 runtimeLine("Homebrew", status: dependencyManager.homebrew, install: dependencyManager.installHomebrew)
-                runtimeLine("Ollama", status: dependencyManager.ollama, install: dependencyManager.installOllama)
+                runtimeLine("Ollama", status: dependencyManager.ollama, install: { confirmingOllamaDownload = true }, actionLabel: "Download")
+
+                if dependencyManager.isDownloadingOllama {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                            .scaleEffect(0.65)
+                        Text("Downloading Ollama from ollama.com...")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(.secondary)
+                    }
+                } else if let url = dependencyManager.ollamaDownloadTargetURL {
+                    Button {
+                        NSWorkspace.shared.activateFileViewerSelecting([url])
+                    } label: {
+                        Label("Ollama DMG downloaded", systemImage: "checkmark.circle")
+                            .font(.system(size: 10.5, weight: .medium))
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.green)
+                    .noFocusRing()
+                } else if let error = dependencyManager.ollamaDownloadError {
+                    Text(error)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
                 Divider()
 
@@ -169,9 +198,17 @@ struct RuntimeCard: View {
         .onAppear {
             ollama.refreshServerStatus()
         }
+        .alert("Download Ollama?", isPresented: $confirmingOllamaDownload) {
+            Button("Download") {
+                dependencyManager.installOllama()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Airstrip will download the official macOS DMG from ollama.com into your Downloads folder. Open the DMG to finish installing Ollama.")
+        }
     }
 
-    private func runtimeLine(_ name: String, status: DependencyStatus, install: @escaping () -> Void) -> some View {
+    private func runtimeLine(_ name: String, status: DependencyStatus, install: @escaping () -> Void, actionLabel: String = "Install") -> some View {
         HStack(spacing: 7) {
             Circle()
                 .fill(statusColor(status))
@@ -193,11 +230,12 @@ struct RuntimeCard: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             case .missing:
-                Button("Install", action: install)
+                Button(actionLabel, action: install)
                     .buttonStyle(.borderless)
                     .controlSize(.mini)
                     .font(.system(size: 10.5, weight: .medium))
                     .noFocusRing()
+                    .disabled(name == "Ollama" && dependencyManager.isDownloadingOllama)
             }
         }
     }
@@ -237,16 +275,6 @@ struct HelpCard: View {
                         showGuide = true
                     } label: {
                         Label("Guide", systemImage: "book")
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .airstripGlassButton()
-                    .controlSize(.small)
-                    .noFocusRing()
-
-                    Button {
-                        showGuide = true
-                    } label: {
-                        Label("Check a Folder", systemImage: "folder.badge.questionmark")
                             .font(.system(size: 11, weight: .medium))
                     }
                     .airstripGlassButton()
@@ -375,7 +403,7 @@ struct StatusSidebar: View {
             return state?.isRunning == true || state?.isPreparing == true
         }.count
 
-        if [dependencyManager.python, dependencyManager.homebrew, dependencyManager.ollama].contains(.unknown) {
+        if [dependencyManager.python, dependencyManager.node, dependencyManager.homebrew, dependencyManager.ollama].contains(.unknown) {
             return "Checking local tools..."
         }
         if running > 0 {
@@ -526,10 +554,6 @@ struct CapabilityGuideSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     guideSection
-
-                    Divider()
-
-                    FolderCheckerSection()
                 }
                 .padding(20)
             }
@@ -548,7 +572,7 @@ struct CapabilityGuideSheet: View {
             capabilityRow(
                 icon: "checkmark.circle.fill", color: .green,
                 title: "Local web apps",
-                detail: "Streamlit, Flask, FastAPI, or anything that serves a port. The app opens in a built-in browser tab. Example: streamlit run app.py --server.port $PORT."
+                detail: "Streamlit, Flask, FastAPI, Vite, Next.js, static HTML, or anything that serves a port. The app opens in a built-in browser tab."
             )
 
             capabilityRow(
@@ -566,7 +590,7 @@ struct CapabilityGuideSheet: View {
             capabilityRow(
                 icon: "xmark.circle.fill", color: .red,
                 title: "What does not work",
-                detail: "Windows or Linux binaries, folders with no runnable command and no recognizable entry point, and apps that need other languages' runtimes (Node, Ruby...) unless already installed."
+                detail: "Windows or Linux binaries, mobile apps, Docker-only repos, cloud-only backends, folders with no runnable command, and projects that need runtimes Airstrip cannot install or detect yet."
             )
 
             VStack(alignment: .leading, spacing: 6) {
@@ -586,7 +610,7 @@ struct CapabilityGuideSheet: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
 
-                Text("No airstrip.json? Airstrip still tries: it reads the README for commands and looks for app.py or main.py.")
+                Text("No airstrip.json? Airstrip still tries: it reads package.json scripts, serves index.html, reads README commands, and looks for app.py, main.py, streamlit_app.py, or app/main.py.")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
@@ -614,137 +638,309 @@ struct CapabilityGuideSheet: View {
     }
 }
 
-// MARK: - Folder checker
-
-private struct FolderCheckerSection: View {
-    @EnvironmentObject private var store: ProjectStore
-    @EnvironmentObject private var dependencyManager: DependencyManager
-
-    @State private var checkedFolder: URL?
-    @State private var results: [FolderCheckResult] = []
-    @State private var isChecking = false
+struct FirstRunOnboardingSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Binding var hasSeenOnboarding: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Check a Folder")
-                        .font(.system(size: 13, weight: .semibold))
+        VStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 14) {
+                Image(systemName: "airplane.departure")
+                    .font(.system(size: 28, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 42, height: 42)
 
-                    Text("Grade any folder before importing it.")
-                        .font(.system(size: 11))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Set Up Airstrip")
+                        .font(.title2.weight(.semibold))
+
+                    Text("Check this Mac, then drop in a project folder.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+            }
+            .padding(20)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    RuntimeCard()
+
+                    onboardingSection(
+                        title: "Can Run",
+                        icon: "checkmark.circle.fill",
+                        tint: .green,
+                        lines: [
+                            "Python automations with requirements.txt.",
+                            "Static HTML and local web apps such as Streamlit, Flask, FastAPI, Vite, and Next.js.",
+                            "Shell commands declared in airstrip.json.",
+                            "Ollama-backed projects that declare local model names."
+                        ]
+                    )
+
+                    onboardingSection(
+                        title: "Needs Preparation",
+                        icon: "exclamationmark.triangle.fill",
+                        tint: .orange,
+                        lines: [
+                            "Folders with no clear run command.",
+                            "Docker-only, mobile, cloud-only, Windows-only, or Linux-only projects.",
+                            "Projects that require runtimes or system services Airstrip cannot install or detect yet."
+                        ]
+                    )
+                }
+                .padding(20)
+            }
+
+            Divider()
+
+            HStack {
+                Spacer()
+
+                Button("Done") {
+                    hasSeenOnboarding = true
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+                .noFocusRing()
+            }
+            .padding(16)
+        }
+        .frame(minWidth: 560, idealWidth: 640, maxWidth: 760, minHeight: 620, idealHeight: 700, maxHeight: 820)
+    }
+
+    private func onboardingSection(title: String, icon: String, tint: Color = .accentColor, lines: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(title, systemImage: icon)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(tint)
+
+            VStack(alignment: .leading, spacing: 7) {
+                ForEach(lines, id: \.self) { line in
+                    HStack(alignment: .top, spacing: 8) {
+                        Circle()
+                            .fill(tint.opacity(0.75))
+                            .frame(width: 5, height: 5)
+                            .padding(.top, 6)
+
+                        Text(line)
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .airstripGlassPanel(cornerRadius: 10, tint: tint, fallbackOpacity: 0.35)
+    }
+}
+
+struct ImportRunCheckerSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: ProjectStore
+
+    let isChecking: Bool
+    let checks: [AirstripRunCheck]
+
+    private var importableChecks: [AirstripRunCheck] {
+        checks.filter { $0.canImport }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "checklist.checked")
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 34, height: 34)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Airstrip Run Checker")
+                        .font(.title3.weight(.semibold))
+
+                    Text(isChecking ? "Checking what this can run..." : summaryText)
+                        .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
 
                 Spacer()
 
-                Button {
-                    pickFolder()
-                } label: {
-                    Label("Choose Folder...", systemImage: "folder.badge.questionmark")
-                }
-                .airstripGlassButton(prominent: true)
-                .controlSize(.small)
-                .disabled(isChecking)
+                Button("Close") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                    .noFocusRing()
             }
+            .padding(18)
+
+            Divider()
 
             if isChecking {
-                HStack(spacing: 8) {
+                VStack(spacing: 12) {
                     ProgressView()
-                        .controlSize(.small)
-
-                    Text("Checking \(checkedFolder?.lastPathComponent ?? "folder")...")
-                        .font(.system(size: 11.5))
+                    Text("Reading the dropped item and checking local runtimes.")
+                        .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
-            } else if let folder = checkedFolder, !results.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    verdictBanner
-
-                    ForEach(results) { result in
-                        HStack(alignment: .top, spacing: 8) {
-                            Image(systemName: result.kind.icon)
-                                .font(.system(size: 12))
-                                .foregroundStyle(result.kind.color)
-                                .frame(width: 16)
-                                .padding(.top, 1)
-
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(result.title)
-                                    .font(.system(size: 11.5, weight: .medium))
-
-                                if !result.detail.isEmpty {
-                                    Text(result.detail)
-                                        .font(.system(size: 10.5))
-                                        .foregroundStyle(.secondary)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                            }
-
-                            Spacer(minLength: 0)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        ForEach(checks) { check in
+                            RunCheckCard(check: check)
                         }
                     }
-
-                    if verdict != .fail {
-                        Button {
-                            store.importProject(from: folder)
-                        } label: {
-                            Label("Import \(folder.lastPathComponent)", systemImage: "plus.app")
-                        }
-                        .airstripGlassButton()
-                        .controlSize(.small)
-                        .padding(.top, 2)
-                    }
+                    .padding(18)
                 }
-                .padding(12)
-                .airstripGlassPanel(cornerRadius: 10, tint: verdict == .pass ? .green : (verdict == .warn ? .orange : .red), fallbackOpacity: 0.35)
             }
-        }
-    }
 
-    private var verdict: FolderCheckResult.Kind {
-        if results.contains(where: { $0.kind == .fail }) { return .fail }
-        if results.contains(where: { $0.kind == .warn }) { return .warn }
-        return .pass
-    }
+            Divider()
 
-    private var verdictBanner: some View {
-        let (text, color): (String, Color) = {
-            switch verdict {
-            case .pass: return ("Ready to run in Airstrip", .green)
-            case .warn: return ("Should run, with caveats", .orange)
-            case .fail: return ("Needs changes before it can run", .red)
-            case .info: return ("Checked", .secondary)
+            HStack(spacing: 10) {
+                Button {
+                    copyGuides(checks)
+                } label: {
+                    Label("Copy Guide", systemImage: "doc.on.doc")
+                }
+                .airstripGlassButton()
+                .disabled(checks.isEmpty)
+                .noFocusRing()
+
+                Spacer()
+
+                Button {
+                    addImportableItems()
+                } label: {
+                    Label(addButtonTitle, systemImage: "plus.app")
+                }
+                .airstripGlassButton(prominent: true)
+                .disabled(importableChecks.isEmpty || isChecking)
+                .noFocusRing()
             }
-        }()
-
-        return Label(text, systemImage: verdict.icon)
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(color)
+            .padding(16)
+        }
+        .frame(minWidth: 620, idealWidth: 720, maxWidth: 860, minHeight: 560, idealHeight: 680, maxHeight: 820)
     }
 
-    private func pickFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
-        panel.message = "Choose a folder to check whether Airstrip can run it"
-        panel.prompt = "Check"
-
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        checkedFolder = url
-        isChecking = true
-        results = []
-
-        let python = dependencyManager.python
-        let ollamaStatus = dependencyManager.ollama
-        Task {
-            let analysis = await FolderCheck.analyze(folder: url, python: python, ollama: ollamaStatus)
-            results = analysis
-            isChecking = false
+    private var summaryText: String {
+        if checks.isEmpty { return "No dropped item was readable." }
+        let blocked = checks.filter { !$0.canImport }.count
+        if blocked == 0 {
+            return checks.count == 1 ? "Ready to add this item." : "Ready to add \(checks.count) items."
         }
+        if importableChecks.isEmpty {
+            return "This needs preparation before Airstrip can add it."
+        }
+        return "\(importableChecks.count) ready, \(blocked) need preparation."
+    }
+
+    private var addButtonTitle: String {
+        importableChecks.count == 1 ? "Add to Airstrip" : "Add \(importableChecks.count) Items"
+    }
+
+    private func addImportableItems() {
+        for check in importableChecks {
+            store.importProject(from: check.url)
+        }
+        dismiss()
+    }
+
+    private func copyGuides(_ checks: [AirstripRunCheck]) {
+        let text = checks.map(\.guideMarkdown).joined(separator: "\n\n---\n\n")
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
     }
 }
+
+private struct RunCheckCard: View {
+    let check: AirstripRunCheck
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: check.verdict.icon)
+                    .font(.system(size: 16))
+                    .foregroundStyle(check.verdict.color)
+                    .frame(width: 22)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(check.url.lastPathComponent)
+                        .font(.system(size: 13, weight: .semibold))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+
+                    Text(check.verdictTitle)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(check.verdict.color)
+                }
+
+                Spacer()
+
+                Button {
+                    copyGuide()
+                } label: {
+                    Label("Copy Guide", systemImage: "doc.on.doc")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .buttonStyle(.borderless)
+                .noFocusRing()
+            }
+
+            VStack(alignment: .leading, spacing: 7) {
+                ForEach(check.results) { result in
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: result.kind.icon)
+                            .font(.system(size: 11))
+                            .foregroundStyle(result.kind.color)
+                            .frame(width: 14)
+                            .padding(.top, 1)
+
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(result.title)
+                                .font(.system(size: 11.5, weight: .medium))
+
+                            if !result.detail.isEmpty {
+                                Text(result.detail)
+                                    .font(.system(size: 10.5))
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !check.canImport {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Guide for Codex or Antigravity")
+                        .font(.system(size: 11.5, weight: .semibold))
+
+                    Text(check.guideMarkdown)
+                        .font(.system(size: 10.5, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .lineLimit(16)
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+                }
+            }
+        }
+        .padding(14)
+        .airstripGlassPanel(cornerRadius: 10, tint: check.verdict.color, fallbackOpacity: 0.35)
+    }
+
+    private func copyGuide() {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(check.guideMarkdown, forType: .string)
+    }
+}
+
+// MARK: - Run checker
 
 struct FolderCheckResult: Identifiable {
     enum Kind {
@@ -773,12 +969,70 @@ struct FolderCheckResult: Identifiable {
     let kind: Kind
     let title: String
     let detail: String
+    let blocksImport: Bool
+
+    init(kind: Kind, title: String, detail: String, blocksImport: Bool = false) {
+        self.kind = kind
+        self.title = title
+        self.detail = detail
+        self.blocksImport = blocksImport
+    }
+}
+
+struct AirstripRunCheck: Identifiable {
+    let id = UUID()
+    let url: URL
+    let results: [FolderCheckResult]
+    let guideMarkdown: String
+
+    var canImport: Bool {
+        !results.contains(where: \.blocksImport)
+    }
+
+    var verdict: FolderCheckResult.Kind {
+        if results.contains(where: { $0.blocksImport }) { return .fail }
+        if results.contains(where: { $0.kind == .fail || $0.kind == .warn }) { return .warn }
+        return .pass
+    }
+
+    var verdictTitle: String {
+        switch verdict {
+        case .pass: return "Ready to add"
+        case .warn: return "Can add after setup"
+        case .fail: return "Needs project preparation"
+        case .info: return "Checked"
+        }
+    }
 }
 
 /// Static analysis of a folder: manifest, run command, Python needs,
 /// declared tools, and Ollama models — the same rules the launcher applies.
 enum FolderCheck {
-    static func analyze(folder: URL, python: DependencyStatus, ollama: DependencyStatus) async -> [FolderCheckResult] {
+    static func analyze(url: URL, python: DependencyStatus, node: DependencyStatus, ollama: DependencyStatus) async -> AirstripRunCheck {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
+            let results = [
+                FolderCheckResult(
+                    kind: .fail,
+                    title: "Item does not exist",
+                    detail: "Airstrip could not read this dropped item.",
+                    blocksImport: true
+                )
+            ]
+            return AirstripRunCheck(url: url, results: results, guideMarkdown: guideMarkdown(for: url, results: results))
+        }
+
+        let results: [FolderCheckResult]
+        if isDirectory.boolValue {
+            results = await analyze(folder: url, python: python, node: node, ollama: ollama)
+        } else {
+            results = analyze(file: url, python: python, node: node)
+        }
+
+        return AirstripRunCheck(url: url, results: results, guideMarkdown: guideMarkdown(for: url, results: results))
+    }
+
+    static func analyze(folder: URL, python: DependencyStatus, node: DependencyStatus, ollama: DependencyStatus) async -> [FolderCheckResult] {
         var results: [FolderCheckResult] = []
         let fm = FileManager.default
         let manifestURL = folder.appendingPathComponent("airstrip.json")
@@ -798,7 +1052,8 @@ enum FolderCheck {
                 results.append(.init(
                     kind: .fail,
                     title: "airstrip.json is broken",
-                    detail: error.localizedDescription
+                    detail: error.localizedDescription,
+                    blocksImport: true
                 ))
             }
         } else {
@@ -807,7 +1062,8 @@ enum FolderCheck {
                 results.append(.init(
                     kind: .fail,
                     title: "No airstrip.json and no recognizable entry point",
-                    detail: "Add an airstrip.json with a run command, or include app.py / main.py."
+                    detail: "Add an airstrip.json with a run command, or include app.py / main.py.",
+                    blocksImport: true
                 ))
             } else {
                 results.append(.init(
@@ -834,7 +1090,8 @@ enum FolderCheck {
                 results.append(.init(
                     kind: .fail,
                     title: "Manifest has no run command",
-                    detail: "Add a \"run\" field or an \"actions\" array to airstrip.json."
+                    detail: "Add a \"run\" field or an \"actions\" array to airstrip.json.",
+                    blocksImport: true
                 ))
             }
 
@@ -874,9 +1131,32 @@ enum FolderCheck {
                     results.append(.init(
                         kind: .fail,
                         title: "\(requirements) is declared but missing",
-                        detail: "The manifest points to a requirements file that is not in the folder."
+                        detail: "The manifest points to a requirements file that is not in the folder.",
+                        blocksImport: true
                     ))
                 }
+            }
+        }
+
+        // Node runtime.
+        let packageJSONExists = fm.fileExists(atPath: folder.appendingPathComponent("package.json").path)
+        let needsNode = packageJSONExists || manifestNeedsNode(manifest)
+        if needsNode {
+            switch node {
+            case .available(let version):
+                results.append(.init(kind: .pass, title: "Node/npm is installed", detail: version))
+            case .missing:
+                results.append(.init(
+                    kind: .fail,
+                    title: "Needs Node/npm, which is not installed",
+                    detail: "Install Node from the Runtime panel before running this web app."
+                ))
+            case .unknown:
+                results.append(.init(kind: .info, title: "Node/npm status still being checked", detail: ""))
+            }
+
+            if packageJSONExists {
+                results.append(packageJSONSummary(folder: folder))
             }
         }
 
@@ -923,7 +1203,7 @@ enum FolderCheck {
     private static func entryPointHints(in folder: URL) -> [String] {
         let fm = FileManager.default
         var hints: [String] = []
-        for candidate in ["app.py", "main.py", "app/main.py", "streamlit_app.py", "README.md"] {
+        for candidate in ["app.py", "main.py", "app/main.py", "streamlit_app.py", "README.md", "package.json", "index.html"] {
             if fm.fileExists(atPath: folder.appendingPathComponent(candidate).path) {
                 hints.append(candidate)
             }
@@ -936,6 +1216,52 @@ enum FolderCheck {
         if let requirements = manifest.requirements, !requirements.isEmpty { return true }
         let commands = [manifest.run ?? ""] + (manifest.actions ?? []).map(\.command)
         return commands.contains { $0.contains("python") || $0.contains("streamlit") || $0.contains("uvicorn") }
+    }
+
+    private static func manifestNeedsNode(_ manifest: ProjectManifest?) -> Bool {
+        guard let manifest else { return false }
+        let commands = [manifest.run ?? ""] + (manifest.actions ?? []).map(\.command)
+        return commands.contains { command in
+            ["npm ", "npx ", "node ", "pnpm ", "yarn "].contains { command.contains($0) || command.hasPrefix($0) }
+        }
+    }
+
+    private static func packageJSONSummary(folder: URL) -> FolderCheckResult {
+        let url = folder.appendingPathComponent("package.json")
+        guard let data = try? Data(contentsOf: url),
+              let package = try? JSONDecoder().decode(NodePackageManifest.self, from: data) else {
+            return .init(
+                kind: .fail,
+                title: "package.json could not be read",
+                detail: "Fix package.json syntax, then try again.",
+                blocksImport: true
+            )
+        }
+
+        guard let scripts = package.scripts, !scripts.isEmpty else {
+            return .init(
+                kind: .fail,
+                title: "package.json has no scripts",
+                detail: "Add a dev/start script or an airstrip.json run command.",
+                blocksImport: true
+            )
+        }
+
+        let runnable = ["dev", "start", "preview"].filter { scripts[$0] != nil }
+        if runnable.isEmpty {
+            return .init(
+                kind: .fail,
+                title: "package.json has scripts, but no dev/start script",
+                detail: "Add an airstrip.json action for the exact command Airstrip should run.",
+                blocksImport: true
+            )
+        }
+
+        return .init(
+            kind: .pass,
+            title: "Web app scripts found",
+            detail: "Airstrip can infer: \(runnable.map { "npm run \($0)" }.joined(separator: ", "))."
+        )
     }
 
     private static func isCommandAvailable(_ command: String) async -> Bool {
@@ -959,4 +1285,142 @@ enum FolderCheck {
             }
         }.value
     }
+
+    private static func analyze(file: URL, python: DependencyStatus, node: DependencyStatus) -> [FolderCheckResult] {
+        let ext = file.pathExtension.lowercased()
+        switch ext {
+        case "py":
+            var results = [
+                FolderCheckResult(kind: .pass, title: "Python script", detail: "Airstrip will wrap this file in a small runnable app folder.")
+            ]
+            appendPythonStatus(python, to: &results)
+            return results
+        case "html", "htm":
+            var results = [
+                FolderCheckResult(kind: .pass, title: "Static web page", detail: "Airstrip will serve it locally and open it in a web tab.")
+            ]
+            appendPythonStatus(python, to: &results)
+            return results
+        case "js", "jsx", "ts", "tsx":
+            var results = [
+                FolderCheckResult(kind: .pass, title: "Frontend source file", detail: "Airstrip will create a minimal Vite wrapper around this file.")
+            ]
+            appendNodeStatus(node, to: &results)
+            return results
+        default:
+            return [
+                FolderCheckResult(
+                    kind: .fail,
+                    title: "Unsupported file type",
+                    detail: "Drop a project folder, a Python script, an HTML file, or a JS/TS/React file.",
+                    blocksImport: true
+                )
+            ]
+        }
+    }
+
+    private static func appendPythonStatus(_ python: DependencyStatus, to results: inout [FolderCheckResult]) {
+        switch python {
+        case .available(let version):
+            results.append(.init(kind: .pass, title: "Python is installed", detail: version))
+        case .missing:
+            results.append(.init(kind: .warn, title: "Python needs installing", detail: "Use the Runtime panel in Airstrip. The project can be added now."))
+        case .unknown:
+            results.append(.init(kind: .info, title: "Python status still being checked", detail: ""))
+        }
+    }
+
+    private static func appendNodeStatus(_ node: DependencyStatus, to results: inout [FolderCheckResult]) {
+        switch node {
+        case .available(let version):
+            results.append(.init(kind: .pass, title: "Node/npm is installed", detail: version))
+        case .missing:
+            results.append(.init(kind: .warn, title: "Node/npm needs installing", detail: "Use the Runtime panel in Airstrip. The project can be added now."))
+        case .unknown:
+            results.append(.init(kind: .info, title: "Node/npm status still being checked", detail: ""))
+        }
+    }
+
+    private static func guideMarkdown(for url: URL, results: [FolderCheckResult]) -> String {
+        let blocking = results.filter(\.blocksImport)
+        let findings = results.map { "- \($0.title)\($0.detail.isEmpty ? "" : ": \($0.detail)")" }.joined(separator: "\n")
+        let action = blocking.isEmpty
+            ? "This item is close. Keep the app behavior the same, but make the project explicit and easy for Airstrip to run."
+            : "This item is not Airstrip-ready yet. Please prepare it so a non-technical user can drop it into Airstrip and run it."
+
+        return """
+        # Make this project Airstrip-ready
+
+        Project path:
+        `\(url.path)`
+
+        \(action)
+
+        ## Airstrip run-checker findings
+        \(findings)
+
+        ## Required outcome
+        1. Add or fix `airstrip.json` at the project root.
+        2. Keep all commands local and non-destructive.
+        3. If this is a web app, make it read `PORT` or use `{PORT}` in `airstrip.json`.
+        4. If this is Python, add `requirements.txt` for packages Airstrip should install.
+        5. If it needs system tools, declare them under `tools` with a Homebrew package when possible.
+
+        ## Good `airstrip.json` templates
+
+        Python script:
+        ```json
+        {
+          "name": "My Automation",
+          "run": "python app.py",
+          "requirements": "requirements.txt"
+        }
+        ```
+
+        Local web app:
+        ```json
+        {
+          "name": "My Web App",
+          "actions": [
+            {
+              "name": "Start",
+              "command": "python app.py --port {PORT}",
+              "isDefault": true,
+              "web": {
+                "port": 8000,
+                "openPath": "/",
+                "openOnStart": true,
+                "allowPortFallback": true
+              }
+            }
+          ]
+        }
+        ```
+
+        Node web app:
+        ```json
+        {
+          "name": "My Node App",
+          "tools": [{ "command": "npm", "brew": "node" }],
+          "actions": [
+            {
+              "name": "Start",
+              "command": "if [ ! -d node_modules ]; then npm install; fi && npm run dev -- --host 127.0.0.1 --port {PORT}",
+              "isDefault": true,
+              "web": {
+                "port": 5173,
+                "openPath": "/",
+                "openOnStart": true,
+                "allowPortFallback": true
+              }
+            }
+          ]
+        }
+        ```
+        """
+    }
+}
+
+private struct NodePackageManifest: Decodable {
+    var scripts: [String: String]?
 }
